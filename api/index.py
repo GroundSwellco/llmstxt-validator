@@ -211,10 +211,10 @@ def _fetch_with_curl(url: str) -> str:
     try:
         result = subprocess.run(
             ["curl", "-s", "-L", "--max-time", "10", "-f", url],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, timeout=15
         )
         if result.returncode == 0 and result.stdout:
-            return result.stdout
+            return result.stdout.decode("utf-8", errors="replace")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return ""
