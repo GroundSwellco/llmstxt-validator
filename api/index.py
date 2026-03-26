@@ -1,4 +1,5 @@
 import re
+import base64
 import subprocess
 import httpx
 from charset_normalizer import from_bytes
@@ -25,6 +26,7 @@ app.add_middleware(
 class ValidateRequest(BaseModel):
     content: Optional[str] = None
     url: Optional[str] = None
+    file_base64: Optional[str] = None
     file_type: str = "llms.txt"  # llms.txt, llms-ctx.txt, llms-full.txt
 
 
@@ -510,6 +512,28 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .structure-label { color: #94a3b8; }
         .structure-value { color: #10b981; font-weight: 500; }
 
+        .upload-area {
+            border: 2px dashed rgba(255,255,255,0.15);
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #10b981;
+            background: rgba(16,185,129,0.05);
+        }
+        .upload-placeholder p { margin-top: 8px; color: #94a3b8; }
+        .upload-file-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            font-size: 1rem;
+        }
+        .upload-file-info span:first-child { color: #10b981; font-weight: 500; }
+
         .loading { display: none; text-align: center; padding: 40px; }
         .loading.show { display: block; }
         .spinner {
@@ -618,6 +642,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <div class="tabs">
                 <div class="tab active" data-tab="url">Fetch from URL</div>
                 <div class="tab" data-tab="paste">Paste Content</div>
+                <div class="tab" data-tab="upload">Upload File</div>
             </div>
 
             <div class="file-type-selector">
@@ -648,6 +673,23 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 ## Optional
 - [Examples](/examples): Code examples"></textarea>
                 <button class="btn" id="validateBtn" style="margin-top: 12px;">Validate</button>
+            </div>
+
+            <div id="uploadInput" class="input-group" style="display:none;">
+                <label>Upload a .txt or .md file</label>
+                <div class="upload-area" id="uploadArea">
+                    <input type="file" id="fileField" accept=".txt,.md,text/plain,text/markdown" style="display:none;">
+                    <div class="upload-placeholder" id="uploadPlaceholder">
+                        <span style="font-size: 2rem;">&#128196;</span>
+                        <p>Drop a file here or click to browse</p>
+                        <p style="font-size: 0.8rem; color: #475569;">Supports .txt and .md files</p>
+                    </div>
+                    <div class="upload-file-info" id="uploadFileInfo" style="display:none;">
+                        <span id="uploadFileName"></span>
+                        <span class="example-link" id="uploadClear">Remove</span>
+                    </div>
+                </div>
+                <button class="btn" id="uploadBtn" style="margin-top: 12px;">Validate</button>
             </div>
         </div>
 
@@ -734,6 +776,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         let currentContent = '';
         let errorLines = new Set();
         let warningLines = new Set();
+        let uploadedFileBase64 = null;
 
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
@@ -744,6 +787,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
                 document.getElementById('urlInput').style.display = currentTab === 'url' ? 'block' : 'none';
                 document.getElementById('pasteInput').style.display = currentTab === 'paste' ? 'block' : 'none';
+                document.getElementById('uploadInput').style.display = currentTab === 'upload' ? 'block' : 'none';
             });
         });
 
@@ -770,6 +814,46 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             if (!content.trim()) return alert('Please paste some content');
 
             await validate({ content, file_type: currentFileType });
+        });
+
+        // Upload file handling
+        const uploadArea = document.getElementById('uploadArea');
+        const fileField = document.getElementById('fileField');
+        const uploadPlaceholder = document.getElementById('uploadPlaceholder');
+        const uploadFileInfo = document.getElementById('uploadFileInfo');
+        const uploadFileName = document.getElementById('uploadFileName');
+
+        uploadArea.addEventListener('click', () => fileField.click());
+        uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+        fileField.addEventListener('change', () => { if (fileField.files.length) handleFile(fileField.files[0]); });
+        document.getElementById('uploadClear').addEventListener('click', (e) => {
+            e.stopPropagation();
+            uploadedFileBase64 = null;
+            fileField.value = '';
+            uploadPlaceholder.style.display = 'block';
+            uploadFileInfo.style.display = 'none';
+        });
+
+        function handleFile(file) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                uploadedFileBase64 = btoa(String.fromCharCode(...new Uint8Array(reader.result)));
+                uploadFileName.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+                uploadPlaceholder.style.display = 'none';
+                uploadFileInfo.style.display = 'flex';
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        document.getElementById('uploadBtn').addEventListener('click', async () => {
+            if (!uploadedFileBase64) return alert('Please select a file first');
+            await validate({ file_base64: uploadedFileBase64, file_type: currentFileType });
         });
 
         async function validate(data) {
@@ -994,6 +1078,18 @@ async def validate(request: ValidateRequest):
 
     if request.url:
         content, encoding_info = await fetch_llmstxt(request.url, request.file_type)
+    elif request.file_base64:
+        # Uploaded file — decode base64 to raw bytes for encoding detection
+        raw = base64.b64decode(request.file_base64)
+        encoding_info = detect_encoding(raw)
+        # Strip BOM if present before decoding
+        if raw.startswith(b'\xef\xbb\xbf'):
+            raw = raw[3:]
+        detected = (encoding_info["detected"] or "utf-8").replace("-", "_")
+        try:
+            content = raw.decode(detected)
+        except (UnicodeDecodeError, LookupError):
+            content = raw.decode("utf-8", errors="replace")
     elif content:
         # For pasted content, detect encoding from the UTF-8 bytes
         raw = content.encode("utf-8")
