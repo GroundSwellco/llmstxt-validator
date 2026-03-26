@@ -1,4 +1,5 @@
 import re
+import subprocess
 import httpx
 from urllib.parse import urlparse
 from typing import Optional
@@ -205,6 +206,20 @@ def validate_llmstxt(content: str, file_type: str = "llms.txt") -> ValidationRes
     )
 
 
+def _fetch_with_curl(url: str) -> str:
+    """Fallback fetch using curl subprocess for sites that block Python HTTP clients."""
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "-L", "--max-time", "10", "-f", url],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return ""
+
+
 async def fetch_llmstxt(url: str, file_type: str = "llms.txt") -> str:
     """Fetch llms.txt from a URL."""
 
@@ -222,8 +237,18 @@ async def fetch_llmstxt(url: str, file_type: str = "llms.txt") -> str:
             response.raise_for_status()
             return response.text
         except httpx.HTTPStatusError as e:
+            # Some sites block Python HTTP clients via TLS fingerprinting.
+            # Fall back to curl which has a trusted TLS fingerprint.
+            if e.response.status_code == 403:
+                content = _fetch_with_curl(full_url)
+                if content:
+                    return content
             raise HTTPException(status_code=404, detail=f"Could not fetch {file_type} from {base_url}. Status: {e.response.status_code}")
         except httpx.RequestError as e:
+            # Also try curl for connection errors (some WAFs reset connections)
+            content = _fetch_with_curl(full_url)
+            if content:
+                return content
             raise HTTPException(status_code=400, detail=f"Error fetching URL: {str(e)}")
 
 
