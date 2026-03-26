@@ -1,6 +1,7 @@
 import re
 import subprocess
 import httpx
+from charset_normalizer import from_bytes
 from urllib.parse import urlparse
 from typing import Optional
 from dataclasses import dataclass, asdict
@@ -65,6 +66,50 @@ def get_file_size(text: str) -> dict:
         "mb": round(size_mb, 4),
         "formatted": f"{size_kb:.2f} KB" if size_kb < 1024 else f"{size_mb:.2f} MB"
     }
+
+
+def detect_encoding(raw_bytes: bytes, content_type: str = None) -> dict:
+    """Detect encoding from raw bytes and optional Content-Type header."""
+    info = {
+        "detected": None,
+        "declared": None,
+        "has_bom": False,
+        "is_utf8": True,
+        "recommendation": None,
+    }
+
+    # Check for BOM (Byte Order Mark)
+    if raw_bytes.startswith(b'\xef\xbb\xbf'):
+        info["has_bom"] = True
+    elif raw_bytes.startswith(b'\xff\xfe') or raw_bytes.startswith(b'\xfe\xff'):
+        info["has_bom"] = True
+
+    # Extract charset from Content-Type header
+    if content_type:
+        for part in content_type.split(';'):
+            part = part.strip().lower()
+            if part.startswith('charset='):
+                info["declared"] = part.split('=', 1)[1].strip().strip('"')
+                break
+
+    # Detect encoding from bytes using charset_normalizer
+    result = from_bytes(raw_bytes).best()
+    if result:
+        # Normalize display name (e.g. utf_8 -> utf-8)
+        info["detected"] = result.encoding.replace("_", "-")
+
+    detected = (info["detected"] or "").lower().replace("-", "").replace("_", "")
+    info["is_utf8"] = detected in ("utf8", "ascii")
+
+    # Build recommendation
+    if not info["is_utf8"]:
+        info["recommendation"] = f"File appears to be encoded as {info['detected']}. UTF-8 is strongly recommended for llms.txt files to ensure compatibility with all LLM consumers."
+    elif info["has_bom"]:
+        info["recommendation"] = "File contains a BOM (Byte Order Mark). While valid, BOM can cause parsing issues with some LLM consumers. Consider saving as UTF-8 without BOM."
+    elif info["declared"] and info["declared"].lower().replace("-", "") not in ("utf8", "ascii") and info["is_utf8"]:
+        info["recommendation"] = f"Server declares charset={info['declared']} but content is actually UTF-8. Consider updating the server's Content-Type header to charset=utf-8."
+
+    return info
 
 
 def validate_llmstxt(content: str, file_type: str = "llms.txt") -> ValidationResult:
@@ -206,22 +251,31 @@ def validate_llmstxt(content: str, file_type: str = "llms.txt") -> ValidationRes
     )
 
 
-def _fetch_with_curl(url: str) -> str:
-    """Fallback fetch using curl subprocess for sites that block Python HTTP clients."""
+def _fetch_with_curl(url: str) -> tuple:
+    """Fallback fetch using curl subprocess. Returns (raw_bytes, content_type)."""
     try:
         result = subprocess.run(
-            ["curl", "-s", "-L", "--max-time", "10", "-f", url],
+            ["curl", "-s", "-L", "--max-time", "10", "-f",
+             "-w", "\n__CT__:%{content_type}", url],
             capture_output=True, timeout=15
         )
         if result.returncode == 0 and result.stdout:
-            return result.stdout.decode("utf-8", errors="replace")
+            # Extract content_type from the appended marker
+            raw = result.stdout
+            ct_marker = b"\n__CT__:"
+            ct_idx = raw.rfind(ct_marker)
+            content_type = None
+            if ct_idx != -1:
+                content_type = raw[ct_idx + len(ct_marker):].decode("ascii", errors="ignore")
+                raw = raw[:ct_idx]
+            return raw, content_type
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    return ""
+    return b"", None
 
 
-async def fetch_llmstxt(url: str, file_type: str = "llms.txt") -> str:
-    """Fetch llms.txt from a URL."""
+async def fetch_llmstxt(url: str, file_type: str = "llms.txt") -> tuple:
+    """Fetch llms.txt from a URL. Returns (content_str, encoding_info)."""
 
     # Parse and construct the llms.txt URL
     parsed = urlparse(url)
@@ -235,20 +289,25 @@ async def fetch_llmstxt(url: str, file_type: str = "llms.txt") -> str:
         try:
             response = await client.get(full_url)
             response.raise_for_status()
-            return response.text
+            raw_bytes = response.content
+            content_type = response.headers.get("content-type", "")
+            enc_info = detect_encoding(raw_bytes, content_type)
+            return response.text, enc_info
         except httpx.HTTPStatusError as e:
             # Some sites block Python HTTP clients via TLS fingerprinting.
             # Fall back to curl which has a trusted TLS fingerprint.
             if e.response.status_code == 403:
-                content = _fetch_with_curl(full_url)
-                if content:
-                    return content
+                raw_bytes, content_type = _fetch_with_curl(full_url)
+                if raw_bytes:
+                    enc_info = detect_encoding(raw_bytes, content_type)
+                    return raw_bytes.decode("utf-8", errors="replace"), enc_info
             raise HTTPException(status_code=404, detail=f"Could not fetch {file_type} from {base_url}. Status: {e.response.status_code}")
         except httpx.RequestError as e:
             # Also try curl for connection errors (some WAFs reset connections)
-            content = _fetch_with_curl(full_url)
-            if content:
-                return content
+            raw_bytes, content_type = _fetch_with_curl(full_url)
+            if raw_bytes:
+                enc_info = detect_encoding(raw_bytes, content_type)
+                return raw_bytes.decode("utf-8", errors="replace"), enc_info
             raise HTTPException(status_code=400, detail=f"Error fetching URL: {str(e)}")
 
 
@@ -621,6 +680,17 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     <div class="stat-value" id="statLinks">0</div>
                     <div class="stat-label">Links</div>
                 </div>
+                <div class="stat-card" id="statEncodingCard">
+                    <div class="stat-value" id="statEncoding" style="font-size: 1.2rem;">-</div>
+                    <div class="stat-label">Encoding</div>
+                </div>
+            </div>
+
+            <div class="issues-section" id="encodingSection" style="display:none;">
+                <div class="issues-title" style="color: #38bdf8;">
+                    Encoding Details
+                </div>
+                <div id="encodingDetails"></div>
             </div>
 
             <div class="content-preview-section" id="contentPreviewSection">
@@ -804,6 +874,33 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             document.getElementById('statSize').textContent = data.stats.size.formatted;
             document.getElementById('statLinks').textContent = data.stats.link_count;
 
+            // Encoding
+            const encSection = document.getElementById('encodingSection');
+            const encCard = document.getElementById('statEncodingCard');
+            if (data.encoding) {
+                const enc = data.encoding;
+                const detected = (enc.detected || 'unknown').toUpperCase();
+                const encEl = document.getElementById('statEncoding');
+                encEl.textContent = detected;
+                encEl.style.color = enc.is_utf8 ? '#10b981' : '#fbbf24';
+
+                let detailsHTML = '';
+                detailsHTML += '<div class="structure-item"><span class="structure-label">Detected Encoding</span><span class="structure-value">' + detected + '</span></div>';
+                if (enc.declared) {
+                    detailsHTML += '<div class="structure-item"><span class="structure-label">Server Declared</span><span class="structure-value">' + enc.declared.toUpperCase() + '</span></div>';
+                }
+                detailsHTML += '<div class="structure-item"><span class="structure-label">BOM Present</span><span class="structure-value">' + (enc.has_bom ? 'Yes' : 'No') + '</span></div>';
+                detailsHTML += '<div class="structure-item"><span class="structure-label">UTF-8 Compatible</span><span class="structure-value" style="color:' + (enc.is_utf8 ? '#10b981' : '#f87171') + ';">' + (enc.is_utf8 ? 'Yes' : 'No') + '</span></div>';
+                if (enc.recommendation) {
+                    detailsHTML += '<div class="issue-item issue-warning" style="margin-top: 12px;"><span class="issue-line">Tip</span><span class="issue-message">' + enc.recommendation + '</span></div>';
+                }
+                document.getElementById('encodingDetails').innerHTML = detailsHTML;
+                encSection.style.display = 'block';
+            } else {
+                encSection.style.display = 'none';
+                document.getElementById('statEncoding').textContent = '-';
+            }
+
             // Errors
             const errorsSection = document.getElementById('errorsSection');
             const errorsList = document.getElementById('errorsList');
@@ -893,17 +990,41 @@ async def validate(request: ValidateRequest):
     """Validate llms.txt content or fetch from URL."""
 
     content = request.content
+    encoding_info = None
 
     if request.url:
-        content = await fetch_llmstxt(request.url, request.file_type)
+        content, encoding_info = await fetch_llmstxt(request.url, request.file_type)
+    elif content:
+        # For pasted content, detect encoding from the UTF-8 bytes
+        raw = content.encode("utf-8")
+        encoding_info = detect_encoding(raw)
 
     if not content:
         raise HTTPException(status_code=400, detail="No content provided")
 
     result = validate_llmstxt(content, request.file_type)
 
-    # Include raw content in response for preview
+    # Add encoding warnings to the result
+    if encoding_info:
+        if not encoding_info["is_utf8"]:
+            result.warnings.append(asdict(ValidationError(
+                0, f"Encoding is {encoding_info['detected'] or 'unknown'} — UTF-8 is strongly recommended for llms.txt files.", "warning"
+            )))
+        if encoding_info["has_bom"]:
+            result.warnings.append(asdict(ValidationError(
+                0, "File contains a BOM (Byte Order Mark). Some LLM parsers may not handle this correctly. Consider saving as UTF-8 without BOM.", "warning"
+            )))
+        if encoding_info["declared"] and encoding_info["detected"]:
+            declared_norm = encoding_info["declared"].lower().replace("-", "").replace("_", "")
+            detected_norm = encoding_info["detected"].lower().replace("-", "").replace("_", "")
+            if declared_norm != detected_norm and not (declared_norm in ("utf8", "ascii") and detected_norm in ("utf8", "ascii")):
+                result.warnings.append(asdict(ValidationError(
+                    0, f"Encoding mismatch: server declares {encoding_info['declared']} but content appears to be {encoding_info['detected']}.", "warning"
+                )))
+
+    # Include raw content and encoding info in response
     response = asdict(result)
     response["content"] = content
+    response["encoding"] = encoding_info
 
     return response
