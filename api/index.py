@@ -733,6 +733,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     Encoding Details
                 </div>
                 <div id="encodingDetails"></div>
+                <div id="downloadFixWrap" style="display:none; margin-top: 16px; text-align: center;">
+                    <button class="btn" id="downloadFixBtn" style="background: #3b82f6;">
+                        &#8681; Download as UTF-8
+                    </button>
+                    <p style="margin-top: 8px; font-size: 0.8rem; color: #64748b;">
+                        Re-encoded as UTF-8 without BOM — ready to replace your current file
+                    </p>
+                </div>
             </div>
 
             <div class="content-preview-section" id="contentPreviewSection">
@@ -854,6 +862,20 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         document.getElementById('uploadBtn').addEventListener('click', async () => {
             if (!uploadedFileBase64) return alert('Please select a file first');
             await validate({ file_base64: uploadedFileBase64, file_type: currentFileType });
+        });
+
+        // Download re-encoded UTF-8 file
+        document.getElementById('downloadFixBtn').addEventListener('click', () => {
+            if (!currentContent) return;
+            const blob = new Blob([currentContent], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = currentFileType;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         });
 
         async function validate(data) {
@@ -980,9 +1002,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 }
                 document.getElementById('encodingDetails').innerHTML = detailsHTML;
                 encSection.style.display = 'block';
+
+                // Show download-as-UTF-8 button when there's an encoding issue
+                const needsFix = !enc.is_utf8 || enc.has_bom;
+                document.getElementById('downloadFixWrap').style.display = needsFix ? 'block' : 'none';
             } else {
                 encSection.style.display = 'none';
                 document.getElementById('statEncoding').textContent = '-';
+                document.getElementById('downloadFixWrap').style.display = 'none';
             }
 
             // Errors
