@@ -568,6 +568,22 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             align-items: center;
             justify-content: space-between;
         }
+        .preview-actions { display: flex; gap: 8px; }
+        .content-editor {
+            width: 100%;
+            min-height: 350px;
+            padding: 16px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(16,185,129,0.3);
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            resize: vertical;
+            tab-size: 4;
+        }
+        .content-editor:focus { outline: none; border-color: #10b981; }
         .content-preview-wrapper {
             background: rgba(0,0,0,0.4);
             border-radius: 8px;
@@ -733,24 +749,21 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     Encoding Details
                 </div>
                 <div id="encodingDetails"></div>
-                <div id="downloadFixWrap" style="display:none; margin-top: 16px; text-align: center;">
-                    <button class="btn" id="downloadFixBtn" style="background: #3b82f6;">
-                        &#8681; Download as UTF-8
-                    </button>
-                    <p style="margin-top: 8px; font-size: 0.8rem; color: #64748b;">
-                        Re-encoded as UTF-8 without BOM — ready to replace your current file
-                    </p>
-                </div>
             </div>
 
             <div class="content-preview-section" id="contentPreviewSection">
                 <div class="content-preview-title">
                     <span>Content Preview</span>
-                    <button class="btn btn-secondary toggle-preview-btn" id="togglePreviewBtn">Hide</button>
+                    <div class="preview-actions">
+                        <button class="btn btn-secondary toggle-preview-btn" id="editBtn">Edit</button>
+                        <button class="btn btn-secondary toggle-preview-btn" id="togglePreviewBtn">Hide</button>
+                        <button class="btn toggle-preview-btn" id="downloadBtn" style="background: #3b82f6;">&#8681; Download UTF-8</button>
+                    </div>
                 </div>
                 <div class="content-preview-wrapper" id="contentPreviewWrapper">
                     <div id="contentPreview"></div>
                 </div>
+                <textarea id="contentEditor" class="content-editor" style="display:none;"></textarea>
             </div>
 
             <div class="issues-section" id="errorsSection" style="display:none;">
@@ -864,9 +877,37 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             await validate({ file_base64: uploadedFileBase64, file_type: currentFileType });
         });
 
-        // Download re-encoded UTF-8 file
-        document.getElementById('downloadFixBtn').addEventListener('click', () => {
+        // Edit mode toggle
+        let editMode = false;
+        const editor = document.getElementById('contentEditor');
+        const previewWrapper = document.getElementById('contentPreviewWrapper');
+        const editBtn = document.getElementById('editBtn');
+
+        editBtn.addEventListener('click', () => {
+            editMode = !editMode;
+            if (editMode) {
+                editor.value = currentContent;
+                editor.style.display = 'block';
+                previewWrapper.style.display = 'none';
+                editBtn.textContent = 'Preview';
+                editBtn.style.background = '#10b981';
+                editBtn.style.color = '#fff';
+            } else {
+                currentContent = editor.value;
+                displayContentPreview(currentContent, [], []);
+                editor.style.display = 'none';
+                previewWrapper.style.display = 'block';
+                editBtn.textContent = 'Edit';
+                editBtn.style.background = '';
+                editBtn.style.color = '';
+            }
+        });
+
+        // Download as UTF-8 (always available)
+        document.getElementById('downloadBtn').addEventListener('click', () => {
             if (!currentContent) return;
+            // Sync from editor if in edit mode
+            if (editMode) currentContent = editor.value;
             const blob = new Blob([currentContent], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -959,6 +1000,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
 
         function displayResults(data) {
+            // Reset edit mode
+            editMode = false;
+            editor.style.display = 'none';
+            previewWrapper.style.display = 'block';
+            editBtn.textContent = 'Edit';
+            editBtn.style.background = '';
+            editBtn.style.color = '';
+
             // Display content preview first
             if (data.content) {
                 displayContentPreview(data.content, data.errors, data.warnings);
@@ -1002,14 +1051,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 }
                 document.getElementById('encodingDetails').innerHTML = detailsHTML;
                 encSection.style.display = 'block';
-
-                // Show download-as-UTF-8 button when there's an encoding issue
-                const needsFix = !enc.is_utf8 || enc.has_bom;
-                document.getElementById('downloadFixWrap').style.display = needsFix ? 'block' : 'none';
             } else {
                 encSection.style.display = 'none';
                 document.getElementById('statEncoding').textContent = '-';
-                document.getElementById('downloadFixWrap').style.display = 'none';
             }
 
             // Errors
