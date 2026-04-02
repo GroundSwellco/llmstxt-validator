@@ -918,6 +918,20 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             uploadFileInfo.style.display = 'none';
         });
 
+        function setFileType(type) {
+            currentFileType = type;
+            document.querySelectorAll('.file-type-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.type === type);
+            });
+        }
+
+        function detectFileType(filename) {
+            const name = filename.toLowerCase();
+            if (name.includes('llms-full') || name === 'llms-full.txt') return 'llms-full.txt';
+            if (name.includes('llms-ctx') || name === 'llms-ctx.txt') return 'llms-ctx.txt';
+            return 'llms.txt';
+        }
+
         function handleFile(file) {
             const reader = new FileReader();
             reader.onload = () => {
@@ -925,6 +939,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 uploadFileName.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
                 uploadPlaceholder.style.display = 'none';
                 uploadFileInfo.style.display = 'flex';
+
+                // Auto-detect file type from filename
+                setFileType(detectFileType(file.name));
             };
             reader.readAsArrayBuffer(file);
         }
