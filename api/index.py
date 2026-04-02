@@ -512,6 +512,62 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .structure-label { color: #94a3b8; }
         .structure-value { color: #10b981; font-weight: 500; }
 
+        .encoding-intro {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+        .encoding-intro strong { color: #10b981; }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: rgba(56,189,248,0.15);
+            color: #38bdf8;
+            font-size: 0.65rem;
+            font-weight: 700;
+            font-style: normal;
+            cursor: help;
+            margin-left: 6px;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .info-icon .tooltip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #e2e8f0;
+            font-size: 0.78rem;
+            font-weight: 400;
+            padding: 8px 12px;
+            border-radius: 8px;
+            width: 260px;
+            line-height: 1.4;
+            z-index: 10;
+            text-align: left;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            pointer-events: none;
+        }
+        .info-icon .tooltip::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #1e293b;
+        }
+        .info-icon:hover .tooltip { display: block; }
+
         .upload-area {
             border: 2px dashed rgba(255,255,255,0.15);
             border-radius: 12px;
@@ -748,6 +804,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 <div class="issues-title" style="color: #38bdf8;">
                     Encoding Details
                 </div>
+                <p class="encoding-intro">Encoding determines how characters are stored as bytes. For llms.txt files, <strong>UTF-8</strong> is the recommended standard — it supports all languages and special characters while being universally compatible with LLM consumers.</p>
                 <div id="encodingDetails"></div>
             </div>
 
@@ -1039,13 +1096,17 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 encEl.textContent = detected;
                 encEl.style.color = enc.is_utf8 ? '#10b981' : '#fbbf24';
 
-                let detailsHTML = '';
-                detailsHTML += '<div class="structure-item"><span class="structure-label">Detected Encoding</span><span class="structure-value">' + detected + '</span></div>';
-                if (enc.declared) {
-                    detailsHTML += '<div class="structure-item"><span class="structure-label">Server Declared</span><span class="structure-value">' + enc.declared.toUpperCase() + '</span></div>';
+                function infoIcon(text) {
+                    return '<span class="info-icon">i<span class="tooltip">' + text + '</span></span>';
                 }
-                detailsHTML += '<div class="structure-item"><span class="structure-label">BOM Present</span><span class="structure-value">' + (enc.has_bom ? 'Yes' : 'No') + '</span></div>';
-                detailsHTML += '<div class="structure-item"><span class="structure-label">UTF-8 Compatible</span><span class="structure-value" style="color:' + (enc.is_utf8 ? '#10b981' : '#f87171') + ';">' + (enc.is_utf8 ? 'Yes' : 'No') + '</span></div>';
+
+                let detailsHTML = '';
+                detailsHTML += '<div class="structure-item"><span class="structure-label">Detected Encoding' + infoIcon('The character encoding detected by analyzing the raw bytes of the file. Common encodings include UTF-8, ASCII, Latin-1, and Windows-1252.') + '</span><span class="structure-value">' + detected + '</span></div>';
+                if (enc.declared) {
+                    detailsHTML += '<div class="structure-item"><span class="structure-label">Server Declared' + infoIcon('The encoding the web server says the file uses, set via the Content-Type header (e.g. charset=utf-8). If this doesn\\\'t match the actual encoding, characters may display incorrectly.') + '</span><span class="structure-value">' + enc.declared.toUpperCase() + '</span></div>';
+                }
+                detailsHTML += '<div class="structure-item"><span class="structure-label">BOM Present' + infoIcon('A Byte Order Mark (BOM) is an invisible character at the very start of a file that signals its encoding. For UTF-8 it\\\'s unnecessary and can cause issues — some parsers treat it as unexpected text, which may break the # Title on line 1.') + '</span><span class="structure-value">' + (enc.has_bom ? 'Yes' : 'No') + '</span></div>';
+                detailsHTML += '<div class="structure-item"><span class="structure-label">UTF-8 Compatible' + infoIcon('Whether the file uses UTF-8 or ASCII encoding. UTF-8 is the universal standard for web content and supports all languages and special characters. Non-UTF-8 files risk displaying garbled text across different systems.') + '</span><span class="structure-value" style="color:' + (enc.is_utf8 ? '#10b981' : '#f87171') + ';">' + (enc.is_utf8 ? 'Yes' : 'No') + '</span></div>';
                 if (enc.recommendation) {
                     detailsHTML += '<div class="issue-item issue-warning" style="margin-top: 12px;"><span class="issue-line">Tip</span><span class="issue-message">' + enc.recommendation + '</span></div>';
                 }
