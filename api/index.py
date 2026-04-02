@@ -927,8 +927,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
         function detectFileType(filename) {
             const name = filename.toLowerCase();
-            if (name.includes('llms-full') || name === 'llms-full.txt') return 'llms-full.txt';
-            if (name.includes('llms-ctx') || name === 'llms-ctx.txt') return 'llms-ctx.txt';
+            if (name.includes('full')) return 'llms-full.txt';
+            if (name.includes('ctx')) return 'llms-ctx.txt';
             return 'llms.txt';
         }
 
