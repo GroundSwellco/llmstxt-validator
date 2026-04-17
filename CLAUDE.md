@@ -39,17 +39,35 @@ llmstxt-validator/
 └── CLAUDE.md             # This file
 ```
 
+## Page Structure
+The app is a single-page landing page with marketing content below the validator tool:
+
+1. **Sticky navbar** — Logo, anchor links (Validator, About, Features, FAQ), CTA button
+2. **Hero section** — Large headline, value prop, CTA that scrolls to tool
+3. **Validator tool** — URL fetch, paste content, file upload tabs + results display
+4. **What is llms.txt** — Two-column explainer with styled code example
+5. **Why Validate** — 3-column benefit cards
+6. **Features** — 2x3 grid of capability cards
+7. **How It Works** — 3-step visual flow
+8. **FAQ** — Accordion with `<details>`/`<summary>`
+9. **CTA band** — Final call to action
+10. **Footer** — Links to spec, navigation
+
 ## Features
 - [x] Fetch llms.txt from any URL
 - [x] Paste content directly
+- [x] Upload .txt/.md files with drag-and-drop
 - [x] Support for llms.txt, llms-ctx.txt, llms-full.txt
-- [x] Character count
-- [x] File size (bytes, KB, MB)
-- [x] Token estimation (~4 chars = 1 token)
+- [x] Character count, file size, token estimation
 - [x] Validation errors with line numbers
 - [x] Warnings for best practices
 - [x] Structure visualization
-- [x] Dark theme UI
+- [x] Encoding detection (UTF-8, BOM, server header comparison)
+- [x] Inline editing and download as UTF-8
+- [x] Dark theme SaaS-style landing page
+- [x] Scroll reveal animations
+- [x] Responsive design (mobile/tablet/desktop)
+- [x] SEO meta tags and Open Graph
 
 ## Token Estimation
 Uses approximation: ~1.3 tokens per word + 0.5 per punctuation mark.

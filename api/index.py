@@ -319,12 +319,18 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLMs.txt Validator</title>
+    <title>LLMs.txt Validator — Validate Your LLM-Ready Files</title>
+    <meta name="description" content="Validate your llms.txt, llms-ctx.txt, and llms-full.txt files against the official specification. Catch errors, verify structure, and ensure your site is AI-ready.">
+    <meta property="og:title" content="LLMs.txt Validator">
+    <meta property="og:description" content="Validate your llms.txt files against the official spec. Free, instant, no sign-up.">
+    <meta property="og:type" content="website">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            background-attachment: fixed;
             min-height: 100vh;
             color: #e2e8f0;
         }
@@ -701,14 +707,448 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .line-error { animation: none !important; }
         .line-warning { animation: none !important; }
+
+        /* ===== NAVBAR ===== */
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 40px;
+            transition: background 0.3s, box-shadow 0.3s;
+        }
+        .navbar.scrolled {
+            background: rgba(15,15,26,0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 1px 0 rgba(255,255,255,0.06);
+        }
+        .nav-logo {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            text-decoration: none;
+        }
+        .nav-logo span { color: #10b981; }
+        .nav-links { display: flex; align-items: center; gap: 32px; }
+        .nav-links a {
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+        .nav-links a:hover { color: #e2e8f0; }
+        .nav-cta {
+            padding: 8px 20px !important;
+            background: #10b981 !important;
+            color: #fff !important;
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+            font-size: 0.9rem !important;
+            transition: background 0.2s !important;
+        }
+        .nav-cta:hover { background: #059669 !important; }
+
+        /* ===== HERO ===== */
+        .hero {
+            text-align: center;
+            padding: 140px 20px 80px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 30%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(16,185,129,0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: rgba(16,185,129,0.1);
+            border: 1px solid rgba(16,185,129,0.25);
+            border-radius: 50px;
+            color: #10b981;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin-bottom: 24px;
+        }
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.02em;
+            color: #f1f5f9;
+            max-width: 700px;
+            margin: 0 auto 20px;
+        }
+        .hero h1 span { color: #10b981; }
+        .hero-sub {
+            font-size: 1.15rem;
+            color: #94a3b8;
+            max-width: 560px;
+            margin: 0 auto 36px;
+            line-height: 1.7;
+        }
+        .hero-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 32px;
+            background: #10b981;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.05rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        .hero-cta:hover { background: #059669; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(16,185,129,0.25); }
+
+        /* ===== SECTION UTILITIES ===== */
+        .section { padding: 80px 20px; max-width: 1200px; margin: 0 auto; }
+        .section-divider {
+            height: 1px;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.25) 50%, transparent 100%);
+        }
+        .section-label {
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #10b981;
+            margin-bottom: 12px;
+        }
+        .section-heading {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 16px;
+            letter-spacing: -0.01em;
+        }
+        .section-desc {
+            font-size: 1.05rem;
+            color: #94a3b8;
+            max-width: 600px;
+            line-height: 1.7;
+            margin-bottom: 48px;
+        }
+        .section-center { text-align: center; }
+        .section-center .section-desc { margin-left: auto; margin-right: auto; }
+
+        /* ===== TOOL SECTION LABEL ===== */
+        .tool-label {
+            text-align: center;
+            margin-bottom: 24px;
+            padding-top: 20px;
+        }
+        .tool-label span {
+            display: inline-block;
+            padding: 6px 16px;
+            background: rgba(16,185,129,0.1);
+            border: 1px solid rgba(16,185,129,0.2);
+            border-radius: 50px;
+            color: #10b981;
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        /* ===== ABOUT SECTION ===== */
+        .about-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 48px;
+            align-items: center;
+        }
+        .about-text { line-height: 1.8; color: #cbd5e1; font-size: 1.02rem; }
+        .about-text p { margin-bottom: 16px; }
+        .about-text a { color: #10b981; text-decoration: none; }
+        .about-text a:hover { text-decoration: underline; }
+        .about-code {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.88rem;
+            line-height: 1.8;
+            overflow-x: auto;
+        }
+        .about-code .code-comment { color: #475569; }
+        .about-code .code-h1 { color: #10b981; font-weight: 600; }
+        .about-code .code-h2 { color: #38bdf8; }
+        .about-code .code-quote { color: #a78bfa; }
+        .about-code .code-link { color: #fbbf24; }
+        .about-code .code-url { color: #64748b; }
+
+        /* ===== BENEFITS GRID ===== */
+        .benefits-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        .benefit-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 14px;
+            padding: 32px 28px;
+            transition: all 0.3s;
+        }
+        .benefit-card:hover {
+            border-color: rgba(16,185,129,0.3);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+        }
+        .benefit-icon {
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+        }
+        .benefit-icon-green { background: rgba(16,185,129,0.15); }
+        .benefit-icon-blue { background: rgba(56,189,248,0.15); }
+        .benefit-icon-purple { background: rgba(167,139,250,0.15); }
+        .benefit-card h3 {
+            font-size: 1.1rem;
+            color: #f1f5f9;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .benefit-card p {
+            color: #94a3b8;
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        /* ===== FEATURES GRID ===== */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+        .feature-card {
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 28px 24px;
+            transition: all 0.3s;
+        }
+        .feature-card:hover {
+            border-color: rgba(16,185,129,0.25);
+            background: rgba(255,255,255,0.04);
+        }
+        .feature-icon { font-size: 1.5rem; margin-bottom: 14px; }
+        .feature-card h3 {
+            font-size: 1rem;
+            color: #e2e8f0;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .feature-card p {
+            color: #64748b;
+            font-size: 0.88rem;
+            line-height: 1.5;
+        }
+
+        /* ===== HOW IT WORKS ===== */
+        .steps-row {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+            justify-content: center;
+        }
+        .step-item {
+            flex: 1;
+            max-width: 300px;
+            text-align: center;
+            position: relative;
+        }
+        .step-number {
+            width: 56px;
+            height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px;
+            border-radius: 50%;
+            background: rgba(16,185,129,0.15);
+            border: 2px solid rgba(16,185,129,0.4);
+            color: #10b981;
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+        .step-item h3 {
+            font-size: 1.05rem;
+            color: #e2e8f0;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        .step-item p { color: #94a3b8; font-size: 0.9rem; line-height: 1.6; }
+        .step-connector {
+            flex: 0 0 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding-top: 20px;
+            color: rgba(16,185,129,0.4);
+            font-size: 1.5rem;
+        }
+
+        /* ===== FAQ ===== */
+        .faq-list { max-width: 720px; margin: 0 auto; }
+        .faq-item {
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .faq-item summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 0;
+            cursor: pointer;
+            font-size: 1.02rem;
+            color: #e2e8f0;
+            font-weight: 500;
+            list-style: none;
+        }
+        .faq-item summary::-webkit-details-marker { display: none; }
+        .faq-item summary::after {
+            content: '+';
+            font-size: 1.4rem;
+            color: #64748b;
+            transition: transform 0.2s;
+            flex-shrink: 0;
+            margin-left: 16px;
+        }
+        .faq-item[open] summary::after { content: '-'; }
+        .faq-item .faq-answer {
+            padding: 0 0 20px;
+            color: #94a3b8;
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+        .faq-answer a { color: #10b981; text-decoration: none; }
+        .faq-answer a:hover { text-decoration: underline; }
+
+        /* ===== CTA BAND ===== */
+        .cta-band {
+            text-align: center;
+            padding: 80px 20px;
+            position: relative;
+        }
+        .cta-band::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 500px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .cta-band h2 {
+            font-size: 2rem;
+            color: #f1f5f9;
+            margin-bottom: 16px;
+            font-weight: 700;
+        }
+        .cta-band p {
+            color: #94a3b8;
+            margin-bottom: 32px;
+            font-size: 1.05rem;
+        }
+
+        /* ===== FOOTER ===== */
+        .footer-full {
+            text-align: center;
+            padding: 40px 20px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            color: #475569;
+            font-size: 0.85rem;
+        }
+        .footer-links { display: flex; justify-content: center; gap: 32px; margin-bottom: 16px; }
+        .footer-links a { color: #64748b; text-decoration: none; font-size: 0.88rem; }
+        .footer-links a:hover { color: #10b981; }
+
+        /* ===== SCROLL REVEAL ===== */
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+        .reveal.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ===== RESPONSIVE ===== */
+        @media (max-width: 1024px) {
+            .hero h1 { font-size: 2.8rem; }
+            .features-grid { grid-template-columns: repeat(2, 1fr); }
+            .section { padding: 60px 20px; }
+        }
+        @media (max-width: 768px) {
+            .navbar { padding: 14px 20px; }
+            .nav-links { gap: 16px; }
+            .nav-links .nav-link-text { display: none; }
+            .hero { padding: 120px 20px 60px; }
+            .hero h1 { font-size: 2rem; }
+            .hero-sub { font-size: 1rem; }
+            .about-grid { grid-template-columns: 1fr; gap: 32px; }
+            .benefits-grid { grid-template-columns: 1fr; }
+            .features-grid { grid-template-columns: 1fr; }
+            .steps-row { flex-direction: column; align-items: center; }
+            .step-connector { transform: rotate(90deg); padding-top: 0; }
+            .section-heading { font-size: 1.7rem; }
+        }
     </style>
 </head>
 <body>
+    <!-- Navbar -->
+    <nav class="navbar" id="navbar">
+        <a href="#" class="nav-logo">LLMs<span>.txt</span> Validator</a>
+        <div class="nav-links">
+            <a href="#validator" class="nav-link-text">Validator</a>
+            <a href="#about" class="nav-link-text">About</a>
+            <a href="#features" class="nav-link-text">Features</a>
+            <a href="#faq" class="nav-link-text">FAQ</a>
+            <a href="#validator" class="nav-cta">Validate Now</a>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="hero-badge">Open Standard &middot; Free Tool</div>
+        <h1>Validate Your <span>LLMs.txt</span> Files Instantly</h1>
+        <p class="hero-sub">Check compliance with the llms.txt specification. Catch errors, verify structure, and ensure your site is ready for AI agents and language models.</p>
+        <a href="#validator" class="hero-cta">Start Validating &#8595;</a>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- Validator Tool -->
+    <section id="validator">
     <div class="container">
-        <header>
-            <div class="logo">LLMs<span>.txt</span> Validator</div>
-            <p class="subtitle">Validate your llms.txt, llms-ctx.txt, and llms-full.txt files</p>
-        </header>
+        <div class="tool-label"><span>Try It Now</span></div>
 
         <div class="input-section">
             <div class="tabs">
@@ -843,10 +1283,187 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
         </div>
 
-        <footer>
-            <p>Learn more about the <a href="https://llmstxt.org/" target="_blank">llms.txt specification</a></p>
-        </footer>
     </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- What is llms.txt -->
+    <section id="about" class="section reveal">
+        <div class="section-label">About the Standard</div>
+        <div class="section-heading">What is llms.txt?</div>
+        <div class="about-grid">
+            <div class="about-text">
+                <p>The <a href="https://llmstxt.org/" target="_blank">llms.txt specification</a> is a proposed standard that helps websites provide structured, LLM-friendly content. Think of it as a robots.txt for AI — a simple markdown file that tells language models what your site is about and where to find key resources.</p>
+                <p>The format supports three file types: <strong>llms.txt</strong> for a concise overview, <strong>llms-ctx.txt</strong> for additional context, and <strong>llms-full.txt</strong> for comprehensive documentation. Each follows a clean markdown structure with headers, descriptions, and categorized links.</p>
+                <p>As AI agents become more prevalent, having a well-structured llms.txt file ensures your content is discoverable, accessible, and correctly interpreted by language models.</p>
+            </div>
+            <div class="about-code">
+                <div class="code-comment"># A valid llms.txt example</div>
+                <br>
+                <div class="code-h1"># My Project</div>
+                <br>
+                <div class="code-quote">&gt; A brief description of the project<br>&gt; for language models to understand.</div>
+                <br>
+                <div class="code-h2">## Documentation</div>
+                <div class="code-link">- [<span style="color:#fbbf24;">Getting Started</span>](<span class="code-url">https://example.com/start</span>): Quick start guide</div>
+                <div class="code-link">- [<span style="color:#fbbf24;">API Reference</span>](<span class="code-url">https://example.com/api</span>): Full API docs</div>
+                <br>
+                <div class="code-h2">## Optional</div>
+                <div class="code-link">- [<span style="color:#fbbf24;">Examples</span>](<span class="code-url">https://example.com/examples</span>): Code samples</div>
+            </div>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- Why Validate -->
+    <section class="section section-center reveal">
+        <div class="section-label">Why It Matters</div>
+        <div class="section-heading">Why Validate Your llms.txt?</div>
+        <div class="section-desc">A malformed llms.txt means AI agents may misinterpret or ignore your content entirely. Validation ensures your file is spec-compliant and machine-ready.</div>
+        <div class="benefits-grid">
+            <div class="benefit-card">
+                <div class="benefit-icon benefit-icon-green">&#10003;</div>
+                <h3>Catch Errors Early</h3>
+                <p>Detect missing headers, malformed links, encoding issues, and structural problems before they reach production. Line-by-line feedback shows you exactly what to fix.</p>
+            </div>
+            <div class="benefit-card">
+                <div class="benefit-icon benefit-icon-blue">&#9881;</div>
+                <h3>Ensure Spec Compliance</h3>
+                <p>Validate against the official llms.txt specification. Check required fields, recommended sections, link formats, and file size limits automatically.</p>
+            </div>
+            <div class="benefit-card">
+                <div class="benefit-icon benefit-icon-purple">&#9733;</div>
+                <h3>Improve AI Discoverability</h3>
+                <p>A valid, well-structured llms.txt makes your site more accessible to AI crawlers and language models, ensuring your content is properly indexed and understood.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- Features -->
+    <section id="features" class="section section-center reveal">
+        <div class="section-label">Capabilities</div>
+        <div class="section-heading">Everything You Need</div>
+        <div class="section-desc">A comprehensive validation toolkit built specifically for the llms.txt ecosystem.</div>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">&#127760;</div>
+                <h3>URL Fetching</h3>
+                <p>Validate any live site by entering its URL. Handles redirects, encoding detection, and TLS-protected sites.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">&#128196;</div>
+                <h3>Multi-Format Support</h3>
+                <p>Validate llms.txt, llms-ctx.txt, and llms-full.txt files with format-specific rules and size limits.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">&#128300;</div>
+                <h3>Encoding Detection</h3>
+                <p>Automatic character encoding analysis with BOM detection, UTF-8 validation, and server header comparison.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">&#128202;</div>
+                <h3>Structure Analysis</h3>
+                <p>Visual breakdown of your file structure: H1 titles, blockquotes, H2 sections, and link inventory.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">&#129518;</div>
+                <h3>Token Estimation</h3>
+                <p>Approximate LLM token counts so you can gauge context window usage before feeding content to a model.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">&#9998;</div>
+                <h3>Inline Editing</h3>
+                <p>Fix issues directly in the browser, then download the corrected file as clean UTF-8 text.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- How It Works -->
+    <section class="section section-center reveal">
+        <div class="section-label">Simple Process</div>
+        <div class="section-heading">How It Works</div>
+        <div class="section-desc">Three steps to a validated llms.txt file.</div>
+        <div class="steps-row">
+            <div class="step-item">
+                <div class="step-number">1</div>
+                <h3>Provide Your File</h3>
+                <p>Enter a URL, paste content directly, or upload a .txt/.md file from your computer.</p>
+            </div>
+            <div class="step-connector">&#8594;</div>
+            <div class="step-item">
+                <div class="step-number">2</div>
+                <h3>Instant Validation</h3>
+                <p>We check structure, links, encoding, and compliance against the llms.txt specification.</p>
+            </div>
+            <div class="step-connector">&#8594;</div>
+            <div class="step-item">
+                <div class="step-number">3</div>
+                <h3>Review &amp; Fix</h3>
+                <p>Get line-by-line feedback, fix issues inline, and download the corrected file.</p>
+            </div>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- FAQ -->
+    <section id="faq" class="section section-center reveal">
+        <div class="section-label">Common Questions</div>
+        <div class="section-heading">FAQ</div>
+        <div class="section-desc">Everything you need to know about llms.txt and this validator.</div>
+        <div class="faq-list">
+            <details class="faq-item">
+                <summary>What is the llms.txt specification?</summary>
+                <div class="faq-answer">The llms.txt specification is a proposed standard for providing LLM-friendly content on websites. It defines a simple markdown format that helps AI agents and language models understand what a site offers and where to find key resources. Learn more at <a href="https://llmstxt.org/" target="_blank">llmstxt.org</a>.</div>
+            </details>
+            <details class="faq-item">
+                <summary>What file types can I validate?</summary>
+                <div class="faq-answer">You can validate three file types: <strong>llms.txt</strong> (concise site overview, max 500KB), <strong>llms-ctx.txt</strong> (additional context for AI), and <strong>llms-full.txt</strong> (comprehensive documentation with no size limit).</div>
+            </details>
+            <details class="faq-item">
+                <summary>What does the validator check?</summary>
+                <div class="faq-answer">The validator checks for required H1 headers, recommended blockquote summaries, proper H2 section structure, valid link formatting, URL correctness, duplicate links, file size limits, and character encoding. Each issue is reported with a specific line number so you can find and fix it quickly.</div>
+            </details>
+            <details class="faq-item">
+                <summary>How are tokens estimated?</summary>
+                <div class="faq-answer">Token estimates use an approximation of ~1.3 tokens per word plus ~0.5 per punctuation mark. This is a rough guide — actual tokenization varies by model. It helps you gauge whether your content fits within typical LLM context windows.</div>
+            </details>
+            <details class="faq-item">
+                <summary>Is my content stored or shared?</summary>
+                <div class="faq-answer">No. All validation happens in a single request. Content you paste or upload is processed server-side for validation and returned to your browser. Nothing is stored, logged, or shared with third parties.</div>
+            </details>
+            <details class="faq-item">
+                <summary>Where can I learn more about the spec?</summary>
+                <div class="faq-answer">Visit <a href="https://llmstxt.org/" target="_blank">llmstxt.org</a> for the full specification, examples, and community resources. The spec is open and community-driven.</div>
+            </details>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- CTA Band -->
+    <section class="cta-band reveal">
+        <h2>Ready to Validate?</h2>
+        <p>Check your llms.txt file in seconds. Free, instant, no sign-up required.</p>
+        <a href="#validator" class="hero-cta">Go to Validator &#8593;</a>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer-full">
+        <div class="footer-links">
+            <a href="https://llmstxt.org/" target="_blank">llms.txt Specification</a>
+            <a href="#validator">Validator</a>
+            <a href="#about">About</a>
+            <a href="#faq">FAQ</a>
+        </div>
+        <p>A free tool for the llms.txt ecosystem. Built for the AI-ready web.</p>
+    </footer>
 
     <script>
         let currentTab = 'url';
@@ -1208,6 +1825,24 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
             document.getElementById('results').classList.add('show');
         }
+
+        // Navbar scroll behavior
+        const navbar = document.getElementById('navbar');
+        window.addEventListener('scroll', () => {
+            navbar.classList.toggle('scrolled', window.scrollY > 60);
+        });
+
+        // Scroll reveal for marketing sections
+        const revealObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    revealObserver.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.12 });
+
+        document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
     </script>
 </body>
 </html>'''
