@@ -321,9 +321,130 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LLMs.txt Validator — Validate Your LLM-Ready Files</title>
     <meta name="description" content="Validate your llms.txt, llms-ctx.txt, and llms-full.txt files against the official specification. Catch errors, verify structure, and ensure your site is AI-ready.">
-    <meta property="og:title" content="LLMs.txt Validator">
-    <meta property="og:description" content="Validate your llms.txt files against the official spec. Free, instant, no sign-up.">
+    <meta name="keywords" content="llms.txt, llms.txt validator, llms-full.txt, llms-ctx.txt, llmstxt, AI-ready web, LLM validation, llmstxt.org">
+    <meta name="author" content="LLMs.txt Validator">
+    <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
+    <meta name="theme-color" content="#10b981">
+    <link rel="canonical" href="https://llmvalidator.io/">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2310b981'/%3E%3Cpath d='M28 52 L44 68 L74 34' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt">
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="LLMs.txt Validator — Validate Your LLM-Ready Files">
+    <meta property="og:description" content="Validate your llms.txt, llms-ctx.txt, and llms-full.txt files against the official spec. Free, instant, no sign-up.">
     <meta property="og:type" content="website">
+    <meta property="og:url" content="https://llmvalidator.io/">
+    <meta property="og:site_name" content="LLMs.txt Validator">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:image" content="https://llmvalidator.io/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="LLMs.txt Validator — Validate Your LLM-Ready Files">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="LLMs.txt Validator — Validate Your LLM-Ready Files">
+    <meta name="twitter:description" content="Validate your llms.txt files against the official spec. Free, instant, no sign-up.">
+    <meta name="twitter:image" content="https://llmvalidator.io/og-image.png">
+    <meta name="twitter:image:alt" content="LLMs.txt Validator — Validate Your LLM-Ready Files">
+
+    <!-- JSON-LD: WebSite -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "LLMs.txt Validator",
+      "url": "https://llmvalidator.io/",
+      "description": "Validate your llms.txt, llms-ctx.txt, and llms-full.txt files against the official specification.",
+      "inLanguage": "en"
+    }
+    </script>
+
+    <!-- JSON-LD: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "LLMs.txt Validator",
+      "url": "https://llmvalidator.io/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Any (Web)",
+      "description": "Web-based validator for llms.txt, llms-ctx.txt, and llms-full.txt files. Checks structure, links, encoding, file size, and spec compliance.",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "Validate llms.txt, llms-ctx.txt, llms-full.txt",
+        "Fetch from URL, paste content, or upload file",
+        "Character count, file size, token estimation",
+        "Line-level error and warning reporting",
+        "Structure visualization (H1, blockquote, H2, links)",
+        "Encoding detection (UTF-8, BOM, Content-Type)",
+        "Inline editing and UTF-8 download"
+      ]
+    }
+    </script>
+
+    <!-- JSON-LD: FAQPage -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is the llms.txt specification?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The llms.txt specification is a proposed standard for providing LLM-friendly content on websites. It defines a simple markdown format that helps AI agents and language models understand what a site offers and where to find key resources. Learn more at llmstxt.org."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What file types can I validate?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "You can validate three file types: llms.txt (concise site overview, max 500KB), llms-ctx.txt (additional context for AI), and llms-full.txt (comprehensive documentation with no size limit)."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What does the validator check?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The validator checks for required H1 headers, recommended blockquote summaries, proper H2 section structure, valid link formatting, URL correctness, duplicate links, file size limits, and character encoding. Each issue is reported with a specific line number so you can find and fix it quickly."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How are tokens estimated?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Token estimates use an approximation of ~1.3 tokens per word plus ~0.5 per punctuation mark. This is a rough guide — actual tokenization varies by model. It helps you gauge whether your content fits within typical LLM context windows."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is my content stored or shared?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. All validation happens in a single request. Content you paste or upload is processed server-side for validation and returned to your browser. Nothing is stored, logged, or shared with third parties."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where can I learn more about the spec?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Visit llmstxt.org for the full specification, examples, and community resources. The spec is open and community-driven."
+          }
+        }
+      ]
+    }
+    </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html { scroll-behavior: smooth; }
@@ -1461,6 +1582,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <a href="#validator">Validator</a>
             <a href="#about">About</a>
             <a href="#faq">FAQ</a>
+            <a href="/sitemap">Sitemap</a>
+            <a href="/llms.txt">llms.txt</a>
         </div>
         <p>A free tool for the llms.txt ecosystem. Built for the AI-ready web.</p>
     </footer>
@@ -1851,6 +1974,154 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTML_TEMPLATE
+
+
+SITE_URL = "https://llmvalidator.io"
+
+
+@app.get("/robots.txt")
+async def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "\n"
+        f"Sitemap: {SITE_URL}/sitemap.xml\n"
+    )
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml():
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f'  <url><loc>{SITE_URL}/</loc><priority>1.0</priority><changefreq>weekly</changefreq></url>\n'
+        f'  <url><loc>{SITE_URL}/sitemap</loc><priority>0.5</priority><changefreq>monthly</changefreq></url>\n'
+        f'  <url><loc>{SITE_URL}/llms.txt</loc><priority>0.5</priority><changefreq>monthly</changefreq></url>\n'
+        '</urlset>\n'
+    )
+    from fastapi.responses import Response
+    return Response(content=body, media_type="application/xml; charset=utf-8")
+
+
+@app.get("/llms.txt", response_class=HTMLResponse)
+async def llms_txt():
+    body = f"""# LLMs.txt Validator
+
+> A free web-based validator for llms.txt, llms-ctx.txt, and llms-full.txt files. Validates structure, links, encoding, and size against the official llmstxt.org specification.
+
+## Tool
+
+- [Validator]({SITE_URL}/#validator): Paste, upload, or fetch a file by URL to validate
+- [Validate API]({SITE_URL}/validate): POST JSON with `content`, `url`, or `file_base64` to validate programmatically
+
+## Pages
+
+- [Home]({SITE_URL}/): Landing page with the validator tool
+- [HTML Sitemap]({SITE_URL}/sitemap): Human-readable site map
+- [XML Sitemap]({SITE_URL}/sitemap.xml): Machine-readable sitemap
+- [Robots]({SITE_URL}/robots.txt): Crawler directives
+
+## Sections
+
+- [What is llms.txt]({SITE_URL}/#about): Overview of the specification
+- [Features]({SITE_URL}/#features): Validator capabilities
+- [FAQ]({SITE_URL}/#faq): Common questions about the validator and spec
+
+## Reference
+
+- [llms.txt specification](https://llmstxt.org/): Official spec for the llms.txt format
+"""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(body, media_type="text/plain; charset=utf-8")
+
+
+SITEMAP_HTML = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sitemap — LLMs.txt Validator</title>
+    <meta name="description" content="Site map for LLMs.txt Validator — all pages, sections, and resources.">
+    <link rel="canonical" href="{SITE_URL}/sitemap">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#10b981">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2310b981'/%3E%3Cpath d='M28 52 L44 68 L74 34' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            color: #e2e8f0;
+            padding: 60px 20px;
+        }}
+        .wrap {{ max-width: 860px; margin: 0 auto; }}
+        a.back {{ color: #10b981; text-decoration: none; font-size: 0.9rem; }}
+        a.back:hover {{ text-decoration: underline; }}
+        h1 {{ font-size: 2.5rem; margin: 20px 0 8px; }}
+        h1 span {{ color: #10b981; }}
+        p.lede {{ color: #94a3b8; margin-bottom: 40px; }}
+        h2 {{
+            font-size: 1.25rem; color: #fff;
+            margin: 32px 0 14px; padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }}
+        ul {{ list-style: none; padding: 0; }}
+        li {{ padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }}
+        li:last-child {{ border-bottom: none; }}
+        a {{ color: #10b981; text-decoration: none; font-weight: 500; }}
+        a:hover {{ text-decoration: underline; }}
+        .desc {{ color: #64748b; font-size: 0.9rem; margin-left: 8px; }}
+        footer {{ margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.08); color: #64748b; font-size: 0.85rem; text-align: center; }}
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <a href="/" class="back">&larr; Back to validator</a>
+        <h1>Site<span>map</span></h1>
+        <p class="lede">All pages, sections, and resources on LLMs.txt Validator.</p>
+
+        <h2>Pages</h2>
+        <ul>
+            <li><a href="/">Home</a><span class="desc">— Landing page with the validator tool</span></li>
+            <li><a href="/sitemap">Sitemap</a><span class="desc">— This page</span></li>
+            <li><a href="/llms.txt">llms.txt</a><span class="desc">— Our own llms.txt file</span></li>
+            <li><a href="/sitemap.xml">XML Sitemap</a><span class="desc">— Machine-readable sitemap</span></li>
+            <li><a href="/robots.txt">robots.txt</a><span class="desc">— Crawler directives</span></li>
+        </ul>
+
+        <h2>Sections on Home</h2>
+        <ul>
+            <li><a href="/#validator">Validator</a><span class="desc">— Paste, upload, or fetch a file by URL</span></li>
+            <li><a href="/#about">About llms.txt</a><span class="desc">— What the specification is and why it matters</span></li>
+            <li><a href="/#features">Features</a><span class="desc">— What the validator checks</span></li>
+            <li><a href="/#faq">FAQ</a><span class="desc">— Common questions</span></li>
+        </ul>
+
+        <h2>API</h2>
+        <ul>
+            <li><a href="/validate">POST /validate</a><span class="desc">— Validate content, URL, or base64 file programmatically</span></li>
+        </ul>
+
+        <h2>External References</h2>
+        <ul>
+            <li><a href="https://llmstxt.org/" rel="noopener" target="_blank">llmstxt.org</a><span class="desc">— Official llms.txt specification</span></li>
+        </ul>
+
+        <footer>
+            A free tool for the llms.txt ecosystem. Built for the AI-ready web.
+        </footer>
+    </div>
+</body>
+</html>"""
+
+
+@app.get("/sitemap", response_class=HTMLResponse)
+async def sitemap_html():
+    return SITEMAP_HTML
 
 
 @app.post("/validate")
