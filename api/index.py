@@ -209,22 +209,44 @@ async def _scrape_homepage_links(
 
 
 async def _fetch_page_metadata(
-    client: httpx.AsyncClient, sem: asyncio.Semaphore, url: str
+    client: httpx.AsyncClient,
+    sem: asyncio.Semaphore,
+    url: str,
+    diag: dict,
 ) -> Optional[dict]:
+    """Fetch a page, fall back to curl when httpx is blocked, extract title+description."""
     async with sem:
+        html: Optional[str] = None
         try:
             r = await client.get(url, timeout=_GENERATE_FETCH_TIMEOUT)
+            if r.status_code == 200:
+                ctype = r.headers.get("content-type", "").lower()
+                if ctype and "html" not in ctype:
+                    diag["non_html"] += 1
+                    return None
+                html = r.text[:200_000]
+                diag["httpx_ok"] += 1
+            elif r.status_code in (403, 429, 503):
+                # Likely bot defense — try curl with its trusted TLS fingerprint
+                diag[f"httpx_{r.status_code}"] = diag.get(f"httpx_{r.status_code}", 0) + 1
+                raw, ct = await asyncio.to_thread(_fetch_with_curl, url)
+                if raw and (not ct or "html" in ct.lower()):
+                    html = raw.decode("utf-8", errors="replace")[:200_000]
+                    diag["curl_ok"] += 1
+            else:
+                diag["non_200"] += 1
+                return None
         except Exception:
+            diag["error"] += 1
             return None
-        if r.status_code != 200:
+
+        if not html:
             return None
-        ctype = r.headers.get("content-type", "").lower()
-        if ctype and "html" not in ctype:
-            return None
-        html = r.text[:200_000]
+
         title = _extract_meta(html, _TITLE_RE)
         desc = _extract_meta(html, _META_DESC_RE) or _extract_meta(html, _META_OG_DESC_RE)
         if not title and not desc:
+            diag["no_meta"] += 1
             return None
         return {"url": url, "title": title or url, "description": desc or ""}
 
@@ -2915,10 +2937,19 @@ async def _run_generation(raw_url: str, file_type: str) -> dict:
     homepage_title: Optional[str] = None
     homepage_desc: Optional[str] = None
 
+    browser_ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
     async with httpx.AsyncClient(
         follow_redirects=True,
         timeout=10.0,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; LLMSTxtGen/1.0; +https://llmstxt.org)"},
+        headers={
+            "User-Agent": browser_ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     ) as client:
         urls = await _fetch_sitemap_urls(client, base_url)
         if not urls:
@@ -2945,14 +2976,22 @@ async def _run_generation(raw_url: str, file_type: str) -> dict:
                 detail="Could not find any pages to analyze. The site may be unreachable or have no internal links.",
             )
 
+        diag = {"httpx_ok": 0, "curl_ok": 0, "non_200": 0, "non_html": 0, "no_meta": 0, "error": 0}
         sem = asyncio.Semaphore(_GENERATE_FETCH_CONCURRENCY)
-        results = await asyncio.gather(*[_fetch_page_metadata(client, sem, u) for u in urls])
+        results = await asyncio.gather(
+            *[_fetch_page_metadata(client, sem, u, diag) for u in urls]
+        )
         pages = [r for r in results if r]
 
     if not pages:
+        diag_summary = ", ".join(f"{k}={v}" for k, v in diag.items() if v)
         raise HTTPException(
             status_code=400,
-            detail="Could not extract metadata from any page. The site may block automated requests.",
+            detail=(
+                f"Could not extract metadata from any of {len(urls)} pages. "
+                f"Breakdown: {diag_summary or 'no detail'}. "
+                "The site likely blocks automated requests or doesn't expose page metadata."
+            ),
         )
 
     homepage_meta = next(
