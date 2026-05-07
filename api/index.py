@@ -25,6 +25,27 @@ try:
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
 
+try:
+    import stripe
+    _STRIPE_AVAILABLE = True
+except ImportError:
+    _STRIPE_AVAILABLE = False
+
+
+def _ensure_stripe():
+    if not _STRIPE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Stripe SDK is not installed on the server.")
+    key = os.environ.get("STRIPE_SECRET_KEY")
+    if not key:
+        raise HTTPException(status_code=503, detail="STRIPE_SECRET_KEY is not configured on the server.")
+    stripe.api_key = key
+
+
+GENERATION_PRICES = {
+    "llms-ctx.txt": {"label": "llms-ctx.txt generation", "amount_cents": 200},
+    "llms-full.txt": {"label": "llms-full.txt generation", "amount_cents": 499},
+}
+
 app = FastAPI(title="LLMs.txt Validator")
 
 app.add_middleware(
@@ -206,6 +227,30 @@ async def _fetch_page_metadata(
         if not title and not desc:
             return None
         return {"url": url, "title": title or url, "description": desc or ""}
+
+
+_CTX_SYSTEM_PROMPT = """You are an expert at writing llms-ctx.txt files per the specification at https://llmstxt.org/.
+
+llms-ctx.txt is the contextual variant of llms.txt — same structure but richer:
+- An H1 with the project or site name
+- A blockquote with a one-sentence summary
+- A 3–5 sentence intro paragraph explaining what the site/project does and how the docs are organized
+- H2 sections grouping related links
+- Each link as: - [Title](URL): a 1–2 sentence description (longer than llms.txt — explain what the page covers and why someone would read it)
+
+Output ONLY the raw file content — no code fences, no preamble, no commentary."""
+
+
+_FULL_SYSTEM_PROMPT = """You are an expert at writing llms-full.txt files per the specification at https://llmstxt.org/.
+
+llms-full.txt is the full-context variant — comprehensive, encyclopedic coverage of what the site documents:
+- An H1 with the project or site name
+- A blockquote with a one-sentence summary
+- A 5–10 sentence intro that establishes context (what the project is, what problems it solves, who it's for, how the docs are organized)
+- H2 sections grouping related links — each section opens with a 2–4 sentence paragraph describing what that section covers in depth
+- Each link as: - [Title](URL): a 2–3 sentence description covering the key concepts and takeaways from that page
+
+Aim for thorough, developer-grade documentation context. Output ONLY the raw file content — no code fences, no preamble, no commentary."""
 
 
 _GENERATE_SYSTEM_PROMPT = """You are an expert at writing llms.txt files per the specification at https://llmstxt.org/.
@@ -2069,6 +2114,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     actionsHtml = `<button class="btn btn-secondary" data-validate="${escapeHtml(r.file)}" data-site="${escapeHtml(url)}">Validate this file</button>`;
                 } else if (r.file === 'llms.txt') {
                     actionsHtml = `<button class="btn" data-generate="${escapeHtml(url)}">Generate with AI</button>`;
+                } else if (r.file === 'llms-ctx.txt') {
+                    actionsHtml = `<button class="btn" data-checkout="llms-ctx.txt" data-url="${escapeHtml(url)}">Generate ctx — $2</button>`;
+                } else if (r.file === 'llms-full.txt') {
+                    actionsHtml = `<button class="btn" data-checkout="llms-full.txt" data-url="${escapeHtml(url)}">Generate full — $4.99</button>`;
                 }
                 const actions = actionsHtml ? `<div class="detector-card-actions">${actionsHtml}</div>` : '';
                 return `
@@ -2099,8 +2148,64 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 btn.addEventListener('click', () => runGenerate(btn.dataset.generate));
             });
 
+            gridEl.querySelectorAll('button[data-checkout]').forEach(btn => {
+                btn.addEventListener('click', () => runCheckout(btn));
+            });
+
             document.getElementById('detectorResults').style.display = 'block';
         }
+
+        async function runCheckout(btn) {
+            const fileType = btn.dataset.checkout;
+            const url = btn.dataset.url;
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Redirecting to Stripe...';
+            try {
+                const response = await fetch('/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, file_type: fileType }),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Checkout failed');
+                window.location.href = data.checkout_url;
+            } catch (err) {
+                alert('Checkout error: ' + err.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function runPaidGeneration(sessionId) {
+            document.getElementById('detector').scrollIntoView({ behavior: 'smooth' });
+            const loading = document.getElementById('generateLoading');
+            const resultsEl = document.getElementById('generatorResults');
+            loading.classList.add('show');
+            resultsEl.style.display = 'none';
+            try {
+                const response = await fetch('/generate-paid?session_id=' + encodeURIComponent(sessionId));
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Generation failed');
+                renderGenerated(data);
+            } catch (err) {
+                alert('Post-payment generation error: ' + err.message);
+            } finally {
+                loading.classList.remove('show');
+            }
+        }
+
+        // Handle post-Stripe redirect: ?paid_session_id=...
+        (function handlePostPaymentRedirect() {
+            const params = new URLSearchParams(window.location.search);
+            const paidId = params.get('paid_session_id');
+            if (paidId) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+                runPaidGeneration(paidId);
+            } else if (params.get('checkout_canceled')) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        })();
 
         async function runGenerate(siteUrl) {
             const loading = document.getElementById('generateLoading');
@@ -2125,11 +2230,15 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
         function renderGenerated(data) {
             const { url, content, pages_analyzed, model, usage } = data;
+            const fileType = data.file_type || 'llms.txt';
             document.getElementById('generatorSummary').innerHTML = `
-                <div>Generated <code>llms.txt</code> for <code>${escapeHtml(url)}</code></div>
+                <div>Generated <code>${escapeHtml(fileType)}</code> for <code>${escapeHtml(url)}</code></div>
                 <div class="summary-note">${pages_analyzed} pages analyzed &middot; model ${escapeHtml(model)} &middot; ${usage.input_tokens} in / ${usage.output_tokens} out tokens</div>
             `;
-            document.getElementById('generatedContent').value = content;
+            const editor = document.getElementById('generatedContent');
+            editor.value = content;
+            editor.dataset.fileType = fileType;
+            document.getElementById('downloadGeneratedBtn').textContent = 'Download ' + fileType;
             document.getElementById('generatorResults').style.display = 'block';
             document.getElementById('generatorResults').scrollIntoView({ behavior: 'smooth' });
         }
@@ -2148,12 +2257,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         });
 
         document.getElementById('downloadGeneratedBtn').addEventListener('click', () => {
-            const text = document.getElementById('generatedContent').value;
-            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const editor = document.getElementById('generatedContent');
+            const fileType = editor.dataset.fileType || 'llms.txt';
+            const blob = new Blob([editor.value], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'llms.txt';
+            a.download = fileType;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -2161,10 +2271,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         });
 
         document.getElementById('validateGeneratedBtn').addEventListener('click', () => {
-            const text = document.getElementById('generatedContent').value;
+            const editor = document.getElementById('generatedContent');
+            const fileType = editor.dataset.fileType || 'llms.txt';
             document.querySelector('.tab[data-tab="paste"]').click();
-            setFileType('llms.txt');
-            document.getElementById('contentField').value = text;
+            setFileType(fileType);
+            document.getElementById('contentField').value = editor.value;
             document.getElementById('validator').scrollIntoView({ behavior: 'smooth' });
             setTimeout(() => document.getElementById('validateBtn').click(), 300);
         });
@@ -2774,10 +2885,16 @@ async def detect(request: DetectRequest):
     }
 
 
-@app.post("/generate")
-async def generate(request: GenerateRequest, http_request: Request):
-    """Generate an llms.txt by crawling a site and asking Claude Haiku to organize it."""
-    raw_url = (request.url or "").strip()
+_FILE_TYPE_PROMPTS = {
+    "llms.txt": (_GENERATE_SYSTEM_PROMPT, 4096),
+    "llms-ctx.txt": (_CTX_SYSTEM_PROMPT, 6144),
+    "llms-full.txt": (_FULL_SYSTEM_PROMPT, 8192),
+}
+
+
+def _normalize_url(raw_url: str) -> tuple[str, str]:
+    """Return (full_url, base_url). Raises 400 on invalid input."""
+    raw_url = (raw_url or "").strip()
     if not raw_url:
         raise HTTPException(status_code=400, detail="URL is required")
     if not raw_url.startswith(("http://", "https://")):
@@ -2785,18 +2902,16 @@ async def generate(request: GenerateRequest, http_request: Request):
     parsed = urlparse(raw_url)
     if not parsed.netloc:
         raise HTTPException(status_code=400, detail="Invalid URL")
-    base_url = f"{parsed.scheme}://{parsed.netloc}"
+    return raw_url, f"{parsed.scheme}://{parsed.netloc}"
 
-    ip = _client_ip(http_request)
-    if not _check_rate_limit(ip):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit hit ({_GENERATE_MAX_PER_HOUR} generations/hour). Try again in an hour.",
-        )
 
-    # Validate Anthropic config up front so we fail fast before crawling
-    _get_anthropic()
+async def _run_generation(raw_url: str, file_type: str) -> dict:
+    """Crawl + LLM-generate. Caller is responsible for auth/rate limit."""
+    if file_type not in _FILE_TYPE_PROMPTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_type}")
 
+    _, base_url = _normalize_url(raw_url)
+    parsed = urlparse(base_url)
     homepage_title: Optional[str] = None
     homepage_desc: Optional[str] = None
 
@@ -2806,9 +2921,6 @@ async def generate(request: GenerateRequest, http_request: Request):
         headers={"User-Agent": "Mozilla/5.0 (compatible; LLMSTxtGen/1.0; +https://llmstxt.org)"},
     ) as client:
         urls = await _fetch_sitemap_urls(client, base_url)
-        # Sitemap URLs are authoritative — don't filter by origin (sites often
-        # host docs on a different subdomain). Homepage scrape already enforces
-        # same-origin internally.
         if not urls:
             urls, homepage_title, homepage_desc = await _scrape_homepage_links(client, base_url)
         if base_url not in urls:
@@ -2863,20 +2975,20 @@ async def generate(request: GenerateRequest, http_request: Request):
         f"Site title: {site_title}\n"
         f"Site description: {site_desc or '(none)'}\n\n"
         f"Pages ({len(pages)}):\n{pages_text}\n\n"
-        f"Generate the llms.txt for this site."
+        f"Generate the {file_type} for this site."
     )
 
+    system_prompt, max_tokens = _FILE_TYPE_PROMPTS[file_type]
     anthropic_client = _get_anthropic()
     try:
         response = await anthropic_client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=4096,
-            system=_GENERATE_SYSTEM_PROMPT,
+            max_tokens=max_tokens,
+            system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
         )
     except Exception as e:
-        msg = str(e)[:300]
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {msg}")
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {str(e)[:300]}")
 
     content = ""
     for block in response.content:
@@ -2889,6 +3001,7 @@ async def generate(request: GenerateRequest, http_request: Request):
 
     return {
         "url": base_url,
+        "file_type": file_type,
         "content": content.strip(),
         "pages_analyzed": len(pages),
         "model": response.model,
@@ -2897,6 +3010,92 @@ async def generate(request: GenerateRequest, http_request: Request):
             "output_tokens": response.usage.output_tokens,
         },
     }
+
+
+@app.post("/generate")
+async def generate(request: GenerateRequest, http_request: Request):
+    """Generate llms.txt (free tier). Crawls + asks Claude Haiku to organize it."""
+    ip = _client_ip(http_request)
+    if not _check_rate_limit(ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit hit ({_GENERATE_MAX_PER_HOUR} generations/hour). Try again in an hour.",
+        )
+    _get_anthropic()  # fail fast if key missing
+    return await _run_generation(request.url, "llms.txt")
+
+
+class CheckoutRequest(BaseModel):
+    url: str
+    file_type: str  # "llms-ctx.txt" or "llms-full.txt"
+
+
+@app.post("/checkout")
+async def checkout(request: CheckoutRequest, http_request: Request):
+    """Create a Stripe Checkout Session for paid ctx/full generation."""
+    _ensure_stripe()
+    raw_url, base_url = _normalize_url(request.url)
+    if request.file_type not in GENERATION_PRICES:
+        raise HTTPException(status_code=400, detail=f"Unsupported paid file type: {request.file_type}")
+
+    price_info = GENERATION_PRICES[request.file_type]
+    site_host = urlparse(base_url).netloc
+    return_base = str(http_request.base_url).rstrip("/")
+
+    try:
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
+            mode="payment",
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {
+                        "name": price_info["label"],
+                        "description": f"AI-generated {request.file_type} for {site_host}",
+                    },
+                    "unit_amount": price_info["amount_cents"],
+                },
+                "quantity": 1,
+            }],
+            success_url=f"{return_base}/?paid_session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{return_base}/?checkout_canceled=1",
+            metadata={
+                "url": raw_url,
+                "file_type": request.file_type,
+                "site_host": site_host,
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {str(e)[:300]}")
+
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+@app.get("/generate-paid")
+async def generate_paid(session_id: str):
+    """Verify a paid Stripe session and return the generated ctx/full content."""
+    _ensure_stripe()
+    try:
+        session = await asyncio.to_thread(stripe.checkout.Session.retrieve, session_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not retrieve Stripe session: {str(e)[:200]}")
+
+    if session.payment_status != "paid":
+        raise HTTPException(
+            status_code=402,
+            detail=f"Payment not completed (status: {session.payment_status}).",
+        )
+
+    metadata = session.metadata or {}
+    url = metadata.get("url")
+    file_type = metadata.get("file_type")
+    if not url or not file_type:
+        raise HTTPException(status_code=400, detail="Stripe session is missing required metadata.")
+    if file_type not in GENERATION_PRICES:
+        raise HTTPException(status_code=400, detail=f"Unsupported paid file type: {file_type}")
+
+    _get_anthropic()
+    return await _run_generation(url, file_type)
 
 
 @app.post("/validate")

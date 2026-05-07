@@ -3,3 +3,4 @@ httpx
 pydantic
 charset-normalizer
 anthropic
+stripe
