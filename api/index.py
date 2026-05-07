@@ -1,7 +1,10 @@
 import re
+import os
+import time
 import asyncio
 import base64
 import subprocess
+from xml.etree import ElementTree as ET
 import httpx
 from charset_normalizer import from_bytes
 from urllib.parse import urlparse
@@ -10,11 +13,17 @@ from dataclasses import dataclass, asdict
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:
+    from anthropic import AsyncAnthropic
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
 
 app = FastAPI(title="LLMs.txt Validator")
 
@@ -42,7 +51,179 @@ class DetectRequest(BaseModel):
     url: str
 
 
+class GenerateRequest(BaseModel):
+    url: str
+
+
 LLMS_FILES = ["llms.txt", "llms-ctx.txt", "llms-full.txt"]
+
+_GENERATE_RATE_LIMITS: dict[str, list[float]] = {}
+_GENERATE_MAX_PER_HOUR = 5
+_GENERATE_MAX_URLS = 25
+_GENERATE_FETCH_TIMEOUT = 3.0
+_GENERATE_FETCH_CONCURRENCY = 10
+_anthropic_client_singleton = None
+
+
+def _get_anthropic():
+    global _anthropic_client_singleton
+    if not _ANTHROPIC_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Anthropic SDK is not installed on the server.")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY is not configured on the server.")
+    if _anthropic_client_singleton is None:
+        _anthropic_client_singleton = AsyncAnthropic()
+    return _anthropic_client_singleton
+
+
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _check_rate_limit(ip: str) -> bool:
+    now = time.time()
+    cutoff = now - 3600
+    times = [t for t in _GENERATE_RATE_LIMITS.get(ip, []) if t > cutoff]
+    if len(times) >= _GENERATE_MAX_PER_HOUR:
+        _GENERATE_RATE_LIMITS[ip] = times
+        return False
+    times.append(now)
+    _GENERATE_RATE_LIMITS[ip] = times
+    return True
+
+
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_META_DESC_RE = re.compile(
+    r'<meta\s+[^>]*?name=["\']description["\'][^>]*?content=["\']([^"\']*)["\']',
+    re.IGNORECASE,
+)
+_META_OG_DESC_RE = re.compile(
+    r'<meta\s+[^>]*?property=["\']og:description["\'][^>]*?content=["\']([^"\']*)["\']',
+    re.IGNORECASE,
+)
+_HREF_RE = re.compile(r'<a\s+[^>]*?href=["\']([^"\'#]+)["\']', re.IGNORECASE)
+
+
+def _extract_meta(html: str, pattern: re.Pattern) -> Optional[str]:
+    m = pattern.search(html)
+    if not m:
+        return None
+    text = re.sub(r"\s+", " ", m.group(1)).strip()
+    return text or None
+
+
+async def _fetch_sitemap_urls(client: httpx.AsyncClient, base_url: str) -> list[str]:
+    """Fetch /sitemap.xml. Follows up to 4 nested sitemap files."""
+    urls: list[str] = []
+    sitemap_queue = [f"{base_url}/sitemap.xml"]
+    seen_sitemaps: set[str] = set()
+    while sitemap_queue and len(seen_sitemaps) < 4:
+        sm_url = sitemap_queue.pop(0)
+        if sm_url in seen_sitemaps:
+            continue
+        seen_sitemaps.add(sm_url)
+        try:
+            r = await client.get(sm_url, timeout=4.0)
+            if r.status_code != 200:
+                continue
+            text = r.text
+        except Exception:
+            continue
+        try:
+            root = ET.fromstring(text.encode("utf-8"))
+            for el in root.iter():
+                if el.tag.endswith("loc") and el.text:
+                    u = el.text.strip()
+                    if not u:
+                        continue
+                    if u.lower().endswith(".xml") and len(seen_sitemaps) + len(sitemap_queue) < 4:
+                        sitemap_queue.append(u)
+                    else:
+                        urls.append(u)
+        except ET.ParseError:
+            for m in re.finditer(r"<loc[^>]*>(.*?)</loc>", text, re.IGNORECASE | re.DOTALL):
+                u = m.group(1).strip()
+                if u:
+                    urls.append(u)
+        if len(urls) >= _GENERATE_MAX_URLS * 4:
+            break
+    return urls
+
+
+async def _scrape_homepage_links(
+    client: httpx.AsyncClient, base_url: str
+) -> tuple[list[str], Optional[str], Optional[str]]:
+    """Fall back when there's no sitemap. Returns (urls, homepage_title, homepage_desc)."""
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        r = await client.get(base_url, timeout=5.0)
+        if r.status_code != 200:
+            return [], None, None
+        html = r.text
+    except Exception:
+        return [], None, None
+    title = _extract_meta(html, _TITLE_RE)
+    desc = _extract_meta(html, _META_DESC_RE) or _extract_meta(html, _META_OG_DESC_RE)
+    seen: set[str] = set()
+    urls: list[str] = []
+    for m in _HREF_RE.finditer(html):
+        href = m.group(1).strip()
+        if href.startswith("/"):
+            href = origin + href
+        if not href.startswith(("http://", "https://")):
+            continue
+        ph = urlparse(href)
+        if ph.netloc != parsed.netloc:
+            continue
+        clean = f"{ph.scheme}://{ph.netloc}{ph.path or '/'}"
+        if clean in seen:
+            continue
+        seen.add(clean)
+        urls.append(clean)
+    return urls, title, desc
+
+
+async def _fetch_page_metadata(
+    client: httpx.AsyncClient, sem: asyncio.Semaphore, url: str
+) -> Optional[dict]:
+    async with sem:
+        try:
+            r = await client.get(url, timeout=_GENERATE_FETCH_TIMEOUT)
+        except Exception:
+            return None
+        if r.status_code != 200:
+            return None
+        ctype = r.headers.get("content-type", "").lower()
+        if ctype and "html" not in ctype:
+            return None
+        html = r.text[:200_000]
+        title = _extract_meta(html, _TITLE_RE)
+        desc = _extract_meta(html, _META_DESC_RE) or _extract_meta(html, _META_OG_DESC_RE)
+        if not title and not desc:
+            return None
+        return {"url": url, "title": title or url, "description": desc or ""}
+
+
+_GENERATE_SYSTEM_PROMPT = """You are an expert at writing llms.txt files per the specification at https://llmstxt.org/.
+
+The llms.txt format:
+- An H1 with the project or site name (required)
+- A blockquote with a one-sentence summary (recommended)
+- An optional intro paragraph or two giving more context
+- H2 sections grouping related links (e.g., Documentation, Examples, API Reference, Blog, Optional)
+- Each link as: - [Title](URL): short description
+
+Guidelines:
+- Pick H2 sections that match how someone would actually navigate the site
+- Skip noise (privacy policies, terms, sign-in, cart) unless the site is essentially that content
+- Use clean, concrete page titles — rewrite long ones, drop boilerplate suffixes
+- Keep descriptions short (5–15 words) and focused on what an LLM would learn from the page
+- The intro paragraph (if any) should be 1–3 sentences with no marketing fluff
+- Output ONLY the raw llms.txt content — no code fences, no preamble, no commentary"""
 
 
 @dataclass
@@ -828,7 +1009,28 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             word-break: break-all;
         }
         .detector-card-meta a:hover { text-decoration: underline; }
-        .detector-card-actions { margin-top: 14px; }
+        .detector-card-actions { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+
+        .generator-output {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+        .generator-output textarea {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: #e2e8f0;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 0.9rem;
+            line-height: 1.55;
+            resize: vertical;
+            min-height: 320px;
+            outline: none;
+        }
+        .generator-actions { display: flex; gap: 12px; flex-wrap: wrap; }
         .spinner {
             width: 40px;
             height: 40px;
@@ -1404,6 +1606,23 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <div class="detector-summary" id="detectorSummary"></div>
             <div class="detector-grid" id="detectorGrid"></div>
         </div>
+
+        <div class="loading" id="generateLoading">
+            <div class="spinner"></div>
+            <p>Reading the site and generating llms.txt with Claude Haiku... this can take 10–20 seconds.</p>
+        </div>
+
+        <div class="generator-results" id="generatorResults" style="display:none;">
+            <div class="detector-summary" id="generatorSummary"></div>
+            <div class="generator-output">
+                <textarea id="generatedContent" class="content-editor" spellcheck="false" rows="20"></textarea>
+            </div>
+            <div class="generator-actions">
+                <button class="btn" id="copyGeneratedBtn">Copy</button>
+                <button class="btn" id="downloadGeneratedBtn">Download llms.txt</button>
+                <button class="btn btn-secondary" id="validateGeneratedBtn">Validate this</button>
+            </div>
+        </div>
     </div>
     </section>
 
@@ -1845,9 +2064,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                        <div style="margin-top:4px;"><a href="${fileUrl}" target="_blank" rel="noopener">${fileUrl}</a></div>`
                     : `<div>${r.status ? 'HTTP ' + r.status : 'Not reachable'}</div>
                        <div class="meta-row" style="margin-top:4px;">${fileUrl}</div>`;
-                const actions = r.found
-                    ? `<div class="detector-card-actions"><button class="btn btn-secondary" data-validate="${escapeHtml(r.file)}" data-site="${escapeHtml(url)}">Validate this file</button></div>`
-                    : '';
+                let actionsHtml = '';
+                if (r.found) {
+                    actionsHtml = `<button class="btn btn-secondary" data-validate="${escapeHtml(r.file)}" data-site="${escapeHtml(url)}">Validate this file</button>`;
+                } else if (r.file === 'llms.txt') {
+                    actionsHtml = `<button class="btn" data-generate="${escapeHtml(url)}">Generate with AI</button>`;
+                }
+                const actions = actionsHtml ? `<div class="detector-card-actions">${actionsHtml}</div>` : '';
                 return `
                     <div class="detector-card ${cls}">
                         <div class="detector-card-header">
@@ -1872,8 +2095,79 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 });
             });
 
+            gridEl.querySelectorAll('button[data-generate]').forEach(btn => {
+                btn.addEventListener('click', () => runGenerate(btn.dataset.generate));
+            });
+
             document.getElementById('detectorResults').style.display = 'block';
         }
+
+        async function runGenerate(siteUrl) {
+            const loading = document.getElementById('generateLoading');
+            const resultsEl = document.getElementById('generatorResults');
+            loading.classList.add('show');
+            resultsEl.style.display = 'none';
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: siteUrl }),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Generation failed');
+                renderGenerated(data);
+            } catch (err) {
+                alert('Generation error: ' + err.message);
+            } finally {
+                loading.classList.remove('show');
+            }
+        }
+
+        function renderGenerated(data) {
+            const { url, content, pages_analyzed, model, usage } = data;
+            document.getElementById('generatorSummary').innerHTML = `
+                <div>Generated <code>llms.txt</code> for <code>${escapeHtml(url)}</code></div>
+                <div class="summary-note">${pages_analyzed} pages analyzed &middot; model ${escapeHtml(model)} &middot; ${usage.input_tokens} in / ${usage.output_tokens} out tokens</div>
+            `;
+            document.getElementById('generatedContent').value = content;
+            document.getElementById('generatorResults').style.display = 'block';
+            document.getElementById('generatorResults').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        document.getElementById('copyGeneratedBtn').addEventListener('click', async () => {
+            const text = document.getElementById('generatedContent').value;
+            try {
+                await navigator.clipboard.writeText(text);
+                const btn = document.getElementById('copyGeneratedBtn');
+                const orig = btn.textContent;
+                btn.textContent = 'Copied!';
+                setTimeout(() => (btn.textContent = orig), 1500);
+            } catch (err) {
+                alert('Could not copy: ' + err.message);
+            }
+        });
+
+        document.getElementById('downloadGeneratedBtn').addEventListener('click', () => {
+            const text = document.getElementById('generatedContent').value;
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'llms.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('validateGeneratedBtn').addEventListener('click', () => {
+            const text = document.getElementById('generatedContent').value;
+            document.querySelector('.tab[data-tab="paste"]').click();
+            setFileType('llms.txt');
+            document.getElementById('contentField').value = text;
+            document.getElementById('validator').scrollIntoView({ behavior: 'smooth' });
+            setTimeout(() => document.getElementById('validateBtn').click(), 300);
+        });
 
         // Validate button (paste)
         document.getElementById('validateBtn').addEventListener('click', async () => {
@@ -2477,6 +2771,131 @@ async def detect(request: DetectRequest):
         "url": base_url,
         "results": list(results),
         "summary": {"found_count": found_count, "total": len(LLMS_FILES)},
+    }
+
+
+@app.post("/generate")
+async def generate(request: GenerateRequest, http_request: Request):
+    """Generate an llms.txt by crawling a site and asking Claude Haiku to organize it."""
+    raw_url = (request.url or "").strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    if not raw_url.startswith(("http://", "https://")):
+        raw_url = "https://" + raw_url
+    parsed = urlparse(raw_url)
+    if not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    ip = _client_ip(http_request)
+    if not _check_rate_limit(ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit hit ({_GENERATE_MAX_PER_HOUR} generations/hour). Try again in an hour.",
+        )
+
+    # Validate Anthropic config up front so we fail fast before crawling
+    _get_anthropic()
+
+    homepage_title: Optional[str] = None
+    homepage_desc: Optional[str] = None
+
+    async with httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=10.0,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; LLMSTxtGen/1.0; +https://llmstxt.org)"},
+    ) as client:
+        urls = await _fetch_sitemap_urls(client, base_url)
+        # Sitemap URLs are authoritative — don't filter by origin (sites often
+        # host docs on a different subdomain). Homepage scrape already enforces
+        # same-origin internally.
+        if not urls:
+            urls, homepage_title, homepage_desc = await _scrape_homepage_links(client, base_url)
+        if base_url not in urls:
+            urls.insert(0, base_url)
+
+        seen_urls: set[str] = set()
+        filtered: list[str] = []
+        for u in urls:
+            ph = urlparse(u)
+            if not ph.netloc:
+                continue
+            key = f"{ph.scheme}://{ph.netloc}{ph.path.rstrip('/') or '/'}"
+            if key in seen_urls:
+                continue
+            seen_urls.add(key)
+            filtered.append(u)
+        urls = filtered[:_GENERATE_MAX_URLS]
+
+        if not urls:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not find any pages to analyze. The site may be unreachable or have no internal links.",
+            )
+
+        sem = asyncio.Semaphore(_GENERATE_FETCH_CONCURRENCY)
+        results = await asyncio.gather(*[_fetch_page_metadata(client, sem, u) for u in urls])
+        pages = [r for r in results if r]
+
+    if not pages:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract metadata from any page. The site may block automated requests.",
+        )
+
+    homepage_meta = next(
+        (p for p in pages if p["url"].rstrip("/") == base_url.rstrip("/")), None
+    )
+    if homepage_meta:
+        site_title = homepage_meta["title"]
+        site_desc = homepage_meta["description"] or homepage_desc or ""
+    else:
+        site_title = homepage_title or parsed.netloc
+        site_desc = homepage_desc or ""
+
+    pages_text = "\n".join(
+        f"- {p['url']} — {p['title']}"
+        + (f" — {p['description']}" if p["description"] else "")
+        for p in pages
+    )
+    user_prompt = (
+        f"Site: {base_url}\n"
+        f"Site title: {site_title}\n"
+        f"Site description: {site_desc or '(none)'}\n\n"
+        f"Pages ({len(pages)}):\n{pages_text}\n\n"
+        f"Generate the llms.txt for this site."
+    )
+
+    anthropic_client = _get_anthropic()
+    try:
+        response = await anthropic_client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=4096,
+            system=_GENERATE_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except Exception as e:
+        msg = str(e)[:300]
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {msg}")
+
+    content = ""
+    for block in response.content:
+        if block.type == "text":
+            content = block.text
+            break
+
+    if not content.strip():
+        raise HTTPException(status_code=502, detail="LLM returned empty content")
+
+    return {
+        "url": base_url,
+        "content": content.strip(),
+        "pages_analyzed": len(pages),
+        "model": response.model,
+        "usage": {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
     }
 
 
