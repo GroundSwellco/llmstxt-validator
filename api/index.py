@@ -208,6 +208,21 @@ async def _scrape_homepage_links(
     return urls, title, desc
 
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
+
+# Skip only obviously-binary responses; everything else flows to the parser
+# (which simply returns nothing if there's no <title>/<meta> to find).
+_BINARY_CTYPE_PREFIXES = (
+    "image/", "video/", "audio/",
+    "application/pdf", "application/zip", "application/octet-stream",
+    "application/x-",
+)
+
+
 async def _fetch_page_metadata(
     client: httpx.AsyncClient,
     sem: asyncio.Semaphore,
@@ -219,20 +234,20 @@ async def _fetch_page_metadata(
         html: Optional[str] = None
         try:
             r = await client.get(url, timeout=_GENERATE_FETCH_TIMEOUT)
-            if r.status_code == 200:
-                ctype = r.headers.get("content-type", "").lower()
-                if ctype and "html" not in ctype:
-                    diag["non_html"] += 1
-                    return None
+            ctype = r.headers.get("content-type", "").lower()
+            is_binary = any(ctype.startswith(p) for p in _BINARY_CTYPE_PREFIXES)
+            if r.status_code == 200 and not is_binary:
                 html = r.text[:200_000]
                 diag["httpx_ok"] += 1
             elif r.status_code in (403, 429, 503):
-                # Likely bot defense — try curl with its trusted TLS fingerprint
                 diag[f"httpx_{r.status_code}"] = diag.get(f"httpx_{r.status_code}", 0) + 1
-                raw, ct = await asyncio.to_thread(_fetch_with_curl, url)
-                if raw and (not ct or "html" in ct.lower()):
+                raw, ct = await asyncio.to_thread(_fetch_with_curl, url, _BROWSER_UA)
+                if raw and not any((ct or "").lower().startswith(p) for p in _BINARY_CTYPE_PREFIXES):
                     html = raw.decode("utf-8", errors="replace")[:200_000]
                     diag["curl_ok"] += 1
+            elif is_binary:
+                diag["binary"] += 1
+                return None
             else:
                 diag["non_200"] += 1
                 return None
@@ -516,14 +531,15 @@ def validate_llmstxt(content: str, file_type: str = "llms.txt") -> ValidationRes
     )
 
 
-def _fetch_with_curl(url: str) -> tuple:
+def _fetch_with_curl(url: str, user_agent: Optional[str] = None) -> tuple:
     """Fallback fetch using curl subprocess. Returns (raw_bytes, content_type)."""
     try:
-        result = subprocess.run(
-            ["curl", "-s", "-L", "--max-time", "10", "-f",
-             "-w", "\n__CT__:%{content_type}", url],
-            capture_output=True, timeout=15
-        )
+        cmd = ["curl", "-s", "-L", "--max-time", "10", "-f",
+               "-w", "\n__CT__:%{content_type}"]
+        if user_agent:
+            cmd.extend(["-A", user_agent])
+        cmd.append(url)
+        result = subprocess.run(cmd, capture_output=True, timeout=15)
         if result.returncode == 0 and result.stdout:
             # Extract content_type from the appended marker
             raw = result.stdout
@@ -2976,7 +2992,7 @@ async def _run_generation(raw_url: str, file_type: str) -> dict:
                 detail="Could not find any pages to analyze. The site may be unreachable or have no internal links.",
             )
 
-        diag = {"httpx_ok": 0, "curl_ok": 0, "non_200": 0, "non_html": 0, "no_meta": 0, "error": 0}
+        diag = {"httpx_ok": 0, "curl_ok": 0, "non_200": 0, "binary": 0, "no_meta": 0, "error": 0}
         sem = asyncio.Semaphore(_GENERATE_FETCH_CONCURRENCY)
         results = await asyncio.gather(
             *[_fetch_page_metadata(client, sem, u, diag) for u in urls]
