@@ -8,8 +8,11 @@ from urllib.parse import urlparse
 from typing import Optional
 from dataclasses import dataclass, asdict
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -22,6 +25,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
 
 class ValidateRequest(BaseModel):
@@ -332,7 +339,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <meta name="keywords" content="llms.txt, llms.txt validator, llms-full.txt, llms-ctx.txt, llmstxt, AI-ready web, LLM validation, llmstxt.org">
     <meta name="author" content="LLMs.txt Validator">
     <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">
-    <meta name="theme-color" content="#10b981">
+    <meta name="theme-color" content="#2C3B4C">
     <link rel="canonical" href="https://llmvalidator.io/">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2310b981'/%3E%3Cpath d='M28 52 L44 68 L74 34' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <link rel="sitemap" type="application/xml" href="/sitemap.xml">
@@ -454,20 +461,37 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     }
     </script>
     <style>
+        @font-face {
+            font-family: 'NHaasGroteskTXPro';
+            src: url('/static/Fonts/NHaasGroteskTXPro-65Md.ttf') format('truetype');
+            font-weight: 500;
+            font-style: normal;
+            font-display: swap;
+        }
+        @font-face {
+            font-family: 'NeuzeitGro';
+            src: url('/static/Fonts/NeuzeitGro-Reg.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: swap;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html { scroll-behavior: smooth; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            font-family: 'NeuzeitGro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a2330 0%, #2C3B4C 100%);
             background-attachment: fixed;
             min-height: 100vh;
             color: #e2e8f0;
+        }
+        h1, h2, h3, h4, h5, h6, .logo, .nav-logo, .stat-value {
+            font-family: 'NHaasGroteskTXPro', 'Helvetica Neue', Helvetica, Arial, sans-serif;
         }
         .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
 
         header { text-align: center; margin-bottom: 40px; }
         .logo { font-size: 2.5rem; font-weight: 700; }
-        .logo span { color: #10b981; }
+        .logo span { color: #7FBBE6; }
         .subtitle { color: #64748b; margin-top: 8px; }
 
         .input-section {
@@ -489,7 +513,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.2s;
         }
         .tab:hover { background: rgba(255,255,255,0.1); }
-        .tab.active { background: #10b981; color: #fff; border-color: #10b981; }
+        .tab.active { background: #7FBBE6; color: #fff; border-color: #7FBBE6; }
 
         .input-group { margin-bottom: 20px; }
         .input-group label { display: block; margin-bottom: 8px; color: #94a3b8; font-size: 0.9rem; }
@@ -504,7 +528,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             color: #fff;
             font-size: 1rem;
         }
-        .url-input:focus { outline: none; border-color: #10b981; }
+        .url-input:focus { outline: none; border-color: #7FBBE6; }
 
         textarea {
             width: 100%;
@@ -518,12 +542,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             font-size: 0.9rem;
             resize: vertical;
         }
-        textarea:focus { outline: none; border-color: #10b981; }
+        textarea:focus { outline: none; border-color: #7FBBE6; }
         textarea::placeholder { color: #475569; }
 
         .btn {
             padding: 12px 24px;
-            background: #10b981;
+            background: #F16365;
             border: none;
             border-radius: 8px;
             color: #fff;
@@ -532,7 +556,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             cursor: pointer;
             transition: all 0.2s;
         }
-        .btn:hover { background: #059669; transform: translateY(-1px); }
+        .btn:hover { background: #D94E50; transform: translateY(-1px); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
         .btn-secondary { background: rgba(255,255,255,0.1); }
         .btn-secondary:hover { background: rgba(255,255,255,0.2); }
@@ -549,7 +573,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.2s;
         }
         .file-type-btn:hover { background: rgba(255,255,255,0.1); }
-        .file-type-btn.active { background: rgba(16,185,129,0.2); color: #10b981; border-color: #10b981; }
+        .file-type-btn.active { background: rgba(127,187,230,0.2); color: #7FBBE6; border-color: #7FBBE6; }
 
         .results { display: none; }
         .results.show { display: block; }
@@ -571,8 +595,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             font-weight: 600;
             font-size: 0.9rem;
         }
-        .status-valid { background: rgba(16,185,129,0.2); color: #10b981; }
-        .status-invalid { background: rgba(239,68,68,0.2); color: #f87171; }
+        .status-valid { background: rgba(127,187,230,0.2); color: #7FBBE6; }
+        .status-invalid { background: rgba(239,68,68,0.2); color: #F16365; }
 
         .stats-grid {
             display: grid;
@@ -588,7 +612,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             padding: 20px;
             text-align: center;
         }
-        .stat-value { font-size: 1.8rem; font-weight: 700; color: #10b981; }
+        .stat-value { font-size: 1.8rem; font-weight: 700; color: #7FBBE6; }
         .stat-label { font-size: 0.85rem; color: #64748b; margin-top: 4px; }
 
         .issues-section {
@@ -625,8 +649,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             white-space: nowrap;
         }
         .issue-message { flex: 1; }
-        .issue-error { border-left: 3px solid #f87171; }
-        .issue-warning { border-left: 3px solid #fbbf24; }
+        .issue-error { border-left: 3px solid #F16365; }
+        .issue-warning { border-left: 3px solid #FBD779; }
 
         .structure-section {
             background: rgba(255,255,255,0.03);
@@ -645,7 +669,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .structure-item:last-child { margin-bottom: 0; }
         .structure-label { color: #94a3b8; }
-        .structure-value { color: #10b981; font-weight: 500; }
+        .structure-value { color: #7FBBE6; font-weight: 500; }
 
         .encoding-intro {
             color: #94a3b8;
@@ -653,7 +677,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             line-height: 1.5;
             margin-bottom: 16px;
         }
-        .encoding-intro strong { color: #10b981; }
+        .encoding-intro strong { color: #7FBBE6; }
 
         .info-icon {
             display: inline-flex;
@@ -663,7 +687,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             height: 16px;
             border-radius: 50%;
             background: rgba(56,189,248,0.15);
-            color: #38bdf8;
+            color: #7FBBE6;
             font-size: 0.65rem;
             font-weight: 700;
             font-style: normal;
@@ -712,8 +736,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.2s;
         }
         .upload-area:hover, .upload-area.dragover {
-            border-color: #10b981;
-            background: rgba(16,185,129,0.05);
+            border-color: #7FBBE6;
+            background: rgba(127,187,230,0.05);
         }
         .upload-placeholder p { margin-top: 8px; color: #94a3b8; }
         .upload-file-info {
@@ -723,7 +747,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             gap: 16px;
             font-size: 1rem;
         }
-        .upload-file-info span:first-child { color: #10b981; font-weight: 500; }
+        .upload-file-info span:first-child { color: #7FBBE6; font-weight: 500; }
 
         .loading { display: none; text-align: center; padding: 40px; }
         .loading.show { display: block; }
@@ -758,8 +782,8 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             border-radius: 4px;
             font-size: 0.9em;
         }
-        .detector-summary .summary-count { color: #10b981; font-weight: 700; }
-        .detector-summary .summary-count.none { color: #f87171; }
+        .detector-summary .summary-count { color: #7FBBE6; font-weight: 700; }
+        .detector-summary .summary-count.none { color: #F16365; }
         .detector-summary .summary-note {
             margin-top: 8px;
             color: #94a3b8;
@@ -777,7 +801,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             border-radius: 12px;
             padding: 20px;
         }
-        .detector-card.found { border-color: rgba(16,185,129,0.4); }
+        .detector-card.found { border-color: rgba(127,187,230,0.4); }
         .detector-card.missing { border-color: rgba(239,68,68,0.25); }
         .detector-card-header {
             display: flex;
@@ -799,7 +823,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .detector-card-meta .meta-row { color: #64748b; }
         .detector-card-meta a {
-            color: #38bdf8;
+            color: #7FBBE6;
             text-decoration: none;
             word-break: break-all;
         }
@@ -809,7 +833,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             width: 40px;
             height: 40px;
             border: 3px solid rgba(255,255,255,0.1);
-            border-left-color: #10b981;
+            border-left-color: #7FBBE6;
             border-radius: 50%;
             animation: spin 1s linear infinite;
             margin: 0 auto 16px;
@@ -817,9 +841,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         @keyframes spin { to { transform: rotate(360deg); } }
 
         footer { text-align: center; margin-top: 60px; color: #475569; font-size: 0.9rem; }
-        footer a { color: #10b981; text-decoration: none; }
+        footer a { color: #7FBBE6; text-decoration: none; }
 
-        .example-link { color: #10b981; cursor: pointer; font-size: 0.85rem; }
+        .example-link { color: #7FBBE6; cursor: pointer; font-size: 0.85rem; }
         .example-link:hover { text-decoration: underline; }
 
         /* Content Preview Panel */
@@ -843,7 +867,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             min-height: 350px;
             padding: 16px;
             background: rgba(0,0,0,0.4);
-            border: 1px solid rgba(16,185,129,0.3);
+            border: 1px solid rgba(127,187,230,0.3);
             border-radius: 8px;
             color: #e2e8f0;
             font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
@@ -852,7 +876,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             resize: vertical;
             tab-size: 4;
         }
-        .content-editor:focus { outline: none; border-color: #10b981; }
+        .content-editor:focus { outline: none; border-color: #7FBBE6; }
         .content-preview-wrapper {
             background: rgba(0,0,0,0.4);
             border-radius: 8px;
@@ -883,19 +907,19 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .line-error {
             background: rgba(239, 68, 68, 0.15);
-            border-left: 3px solid #f87171;
+            border-left: 3px solid #F16365;
         }
         .line-error .line-number {
             background: rgba(239, 68, 68, 0.2);
-            color: #f87171;
+            color: #F16365;
         }
         .line-warning {
             background: rgba(251, 191, 36, 0.15);
-            border-left: 3px solid #fbbf24;
+            border-left: 3px solid #FBD779;
         }
         .line-warning .line-number {
             background: rgba(251, 191, 36, 0.2);
-            color: #fbbf24;
+            color: #FBD779;
         }
         .issue-item {
             cursor: pointer;
@@ -940,7 +964,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             color: #e2e8f0;
             text-decoration: none;
         }
-        .nav-logo span { color: #10b981; }
+        .nav-logo span { color: #7FBBE6; }
         .nav-links { display: flex; align-items: center; gap: 32px; }
         .nav-links a {
             color: #94a3b8;
@@ -951,14 +975,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .nav-links a:hover { color: #e2e8f0; }
         .nav-cta {
             padding: 8px 20px !important;
-            background: #10b981 !important;
+            background: #F16365 !important;
             color: #fff !important;
             border-radius: 8px !important;
             font-weight: 500 !important;
             font-size: 0.9rem !important;
             transition: background 0.2s !important;
         }
-        .nav-cta:hover { background: #059669 !important; }
+        .nav-cta:hover { background: #D94E50 !important; }
 
         /* ===== HERO ===== */
         .hero {
@@ -975,7 +999,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transform: translate(-50%, -50%);
             width: 600px;
             height: 600px;
-            background: radial-gradient(circle, rgba(16,185,129,0.08) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(127,187,230,0.08) 0%, transparent 70%);
             pointer-events: none;
         }
         .hero-badge {
@@ -983,10 +1007,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             align-items: center;
             gap: 8px;
             padding: 6px 16px;
-            background: rgba(16,185,129,0.1);
-            border: 1px solid rgba(16,185,129,0.25);
+            background: rgba(127,187,230,0.1);
+            border: 1px solid rgba(127,187,230,0.25);
             border-radius: 50px;
-            color: #10b981;
+            color: #7FBBE6;
             font-size: 0.85rem;
             font-weight: 500;
             margin-bottom: 24px;
@@ -1000,7 +1024,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             max-width: 700px;
             margin: 0 auto 20px;
         }
-        .hero h1 span { color: #10b981; }
+        .hero h1 span { color: #7FBBE6; }
         .hero-sub {
             font-size: 1.15rem;
             color: #94a3b8;
@@ -1013,7 +1037,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             align-items: center;
             gap: 8px;
             padding: 14px 32px;
-            background: #10b981;
+            background: #F16365;
             color: #fff;
             border: none;
             border-radius: 10px;
@@ -1023,7 +1047,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.2s;
             text-decoration: none;
         }
-        .hero-cta:hover { background: #059669; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(16,185,129,0.25); }
+        .hero-cta:hover { background: #D94E50; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(241,99,101,0.25); }
 
         /* ===== SECTION UTILITIES ===== */
         .section { padding: 80px 20px; max-width: 1200px; margin: 0 auto; }
@@ -1031,14 +1055,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             height: 1px;
             max-width: 1200px;
             margin: 0 auto;
-            background: linear-gradient(90deg, transparent 0%, rgba(16,185,129,0.25) 50%, transparent 100%);
+            background: linear-gradient(90deg, transparent 0%, rgba(127,187,230,0.25) 50%, transparent 100%);
         }
         .section-label {
             text-transform: uppercase;
             letter-spacing: 0.1em;
             font-size: 0.8rem;
             font-weight: 600;
-            color: #10b981;
+            color: #7FBBE6;
             margin-bottom: 12px;
         }
         .section-heading {
@@ -1067,10 +1091,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         .tool-label span {
             display: inline-block;
             padding: 6px 16px;
-            background: rgba(16,185,129,0.1);
-            border: 1px solid rgba(16,185,129,0.2);
+            background: rgba(127,187,230,0.1);
+            border: 1px solid rgba(127,187,230,0.2);
             border-radius: 50px;
-            color: #10b981;
+            color: #7FBBE6;
             font-size: 0.85rem;
             font-weight: 500;
         }
@@ -1084,7 +1108,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .about-text { line-height: 1.8; color: #cbd5e1; font-size: 1.02rem; }
         .about-text p { margin-bottom: 16px; }
-        .about-text a { color: #10b981; text-decoration: none; }
+        .about-text a { color: #7FBBE6; text-decoration: none; }
         .about-text a:hover { text-decoration: underline; }
         .about-code {
             background: rgba(0,0,0,0.4);
@@ -1097,10 +1121,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             overflow-x: auto;
         }
         .about-code .code-comment { color: #475569; }
-        .about-code .code-h1 { color: #10b981; font-weight: 600; }
-        .about-code .code-h2 { color: #38bdf8; }
+        .about-code .code-h1 { color: #7FBBE6; font-weight: 600; }
+        .about-code .code-h2 { color: #7FBBE6; }
         .about-code .code-quote { color: #a78bfa; }
-        .about-code .code-link { color: #fbbf24; }
+        .about-code .code-link { color: #FBD779; }
         .about-code .code-url { color: #64748b; }
 
         /* ===== BENEFITS GRID ===== */
@@ -1117,7 +1141,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.3s;
         }
         .benefit-card:hover {
-            border-color: rgba(16,185,129,0.3);
+            border-color: rgba(127,187,230,0.3);
             transform: translateY(-3px);
             box-shadow: 0 12px 40px rgba(0,0,0,0.2);
         }
@@ -1131,7 +1155,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             font-size: 1.4rem;
             margin-bottom: 20px;
         }
-        .benefit-icon-green { background: rgba(16,185,129,0.15); }
+        .benefit-icon-green { background: rgba(127,187,230,0.15); }
         .benefit-icon-blue { background: rgba(56,189,248,0.15); }
         .benefit-icon-purple { background: rgba(167,139,250,0.15); }
         .benefit-card h3 {
@@ -1160,7 +1184,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transition: all 0.3s;
         }
         .feature-card:hover {
-            border-color: rgba(16,185,129,0.25);
+            border-color: rgba(127,187,230,0.25);
             background: rgba(255,255,255,0.04);
         }
         .feature-icon { font-size: 1.5rem; margin-bottom: 14px; }
@@ -1197,9 +1221,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             justify-content: center;
             margin: 0 auto 20px;
             border-radius: 50%;
-            background: rgba(16,185,129,0.15);
-            border: 2px solid rgba(16,185,129,0.4);
-            color: #10b981;
+            background: rgba(127,187,230,0.15);
+            border: 2px solid rgba(127,187,230,0.4);
+            color: #7FBBE6;
             font-size: 1.3rem;
             font-weight: 700;
         }
@@ -1216,7 +1240,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             align-items: center;
             justify-content: center;
             padding-top: 20px;
-            color: rgba(16,185,129,0.4);
+            color: rgba(127,187,230,0.4);
             font-size: 1.5rem;
         }
 
@@ -1252,7 +1276,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             font-size: 0.95rem;
             line-height: 1.7;
         }
-        .faq-answer a { color: #10b981; text-decoration: none; }
+        .faq-answer a { color: #7FBBE6; text-decoration: none; }
         .faq-answer a:hover { text-decoration: underline; }
 
         /* ===== CTA BAND ===== */
@@ -1269,7 +1293,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             transform: translate(-50%, -50%);
             width: 500px;
             height: 300px;
-            background: radial-gradient(circle, rgba(16,185,129,0.06) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(127,187,230,0.06) 0%, transparent 70%);
             pointer-events: none;
         }
         .cta-band h2 {
@@ -1294,7 +1318,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         }
         .footer-links { display: flex; justify-content: center; gap: 32px; margin-bottom: 16px; }
         .footer-links a { color: #64748b; text-decoration: none; font-size: 0.88rem; }
-        .footer-links a:hover { color: #10b981; }
+        .footer-links a:hover { color: #7FBBE6; }
 
         /* ===== SCROLL REVEAL ===== */
         .reveal {
@@ -1481,7 +1505,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
 
             <div class="issues-section" id="encodingSection" style="display:none;">
-                <div class="issues-title" style="color: #38bdf8;">
+                <div class="issues-title" style="color: #7FBBE6;">
                     Encoding Details
                 </div>
                 <p class="encoding-intro">Encoding determines how characters are stored as bytes. For llms.txt files, <strong>UTF-8</strong> is the recommended standard — it supports all languages and special characters while being universally compatible with LLM consumers.</p>
@@ -1504,14 +1528,14 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             </div>
 
             <div class="issues-section" id="errorsSection" style="display:none;">
-                <div class="issues-title" style="color: #f87171;">
+                <div class="issues-title" style="color: #F16365;">
                     Errors <span class="count" id="errorCount">0</span>
                 </div>
                 <div id="errorsList"></div>
             </div>
 
             <div class="issues-section" id="warningsSection" style="display:none;">
-                <div class="issues-title" style="color: #fbbf24;">
+                <div class="issues-title" style="color: #FBD779;">
                     Warnings <span class="count" id="warningCount">0</span>
                 </div>
                 <div id="warningsList"></div>
@@ -1546,11 +1570,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 <div class="code-quote">&gt; A brief description of the project<br>&gt; for language models to understand.</div>
                 <br>
                 <div class="code-h2">## Documentation</div>
-                <div class="code-link">- [<span style="color:#fbbf24;">Getting Started</span>](<span class="code-url">https://example.com/start</span>): Quick start guide</div>
-                <div class="code-link">- [<span style="color:#fbbf24;">API Reference</span>](<span class="code-url">https://example.com/api</span>): Full API docs</div>
+                <div class="code-link">- [<span style="color:#FBD779;">Getting Started</span>](<span class="code-url">https://example.com/start</span>): Quick start guide</div>
+                <div class="code-link">- [<span style="color:#FBD779;">API Reference</span>](<span class="code-url">https://example.com/api</span>): Full API docs</div>
                 <br>
                 <div class="code-h2">## Optional</div>
-                <div class="code-link">- [<span style="color:#fbbf24;">Examples</span>](<span class="code-url">https://example.com/examples</span>): Code samples</div>
+                <div class="code-link">- [<span style="color:#FBD779;">Examples</span>](<span class="code-url">https://example.com/examples</span>): Code samples</div>
             </div>
         </div>
     </section>
@@ -1929,7 +1953,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 editor.style.display = 'block';
                 previewWrapper.style.display = 'none';
                 editBtn.textContent = 'Preview';
-                editBtn.style.background = '#10b981';
+                editBtn.style.background = '#F16365';
                 editBtn.style.color = '#fff';
             } else {
                 currentContent = editor.value;
@@ -2076,7 +2100,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 const detected = (enc.detected || 'unknown').toUpperCase();
                 const encEl = document.getElementById('statEncoding');
                 encEl.textContent = detected;
-                encEl.style.color = enc.is_utf8 ? '#10b981' : '#fbbf24';
+                encEl.style.color = enc.is_utf8 ? '#7FBBE6' : '#FBD779';
 
                 function infoIcon(text) {
                     return '<span class="info-icon">i<span class="tooltip">' + text + '</span></span>';
@@ -2088,7 +2112,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                     detailsHTML += '<div class="structure-item"><span class="structure-label">Server Declared' + infoIcon('The encoding the web server says the file uses, set via the Content-Type header (e.g. charset=utf-8). If this doesn\\\'t match the actual encoding, characters may display incorrectly.') + '</span><span class="structure-value">' + enc.declared.toUpperCase() + '</span></div>';
                 }
                 detailsHTML += '<div class="structure-item"><span class="structure-label">BOM Present' + infoIcon('A Byte Order Mark (BOM) is an invisible character at the very start of a file that signals its encoding. For UTF-8 it\\\'s unnecessary and can cause issues — some parsers treat it as unexpected text, which may break the # Title on line 1.') + '</span><span class="structure-value">' + (enc.has_bom ? 'Yes' : 'No') + '</span></div>';
-                detailsHTML += '<div class="structure-item"><span class="structure-label">UTF-8 Compatible' + infoIcon('Whether the file uses UTF-8 or ASCII encoding. UTF-8 is the universal standard for web content and supports all languages and special characters. Non-UTF-8 files risk displaying garbled text across different systems.') + '</span><span class="structure-value" style="color:' + (enc.is_utf8 ? '#10b981' : '#f87171') + ';">' + (enc.is_utf8 ? 'Yes' : 'No') + '</span></div>';
+                detailsHTML += '<div class="structure-item"><span class="structure-label">UTF-8 Compatible' + infoIcon('Whether the file uses UTF-8 or ASCII encoding. UTF-8 is the universal standard for web content and supports all languages and special characters. Non-UTF-8 files risk displaying garbled text across different systems.') + '</span><span class="structure-value" style="color:' + (enc.is_utf8 ? '#7FBBE6' : '#F16365') + ';">' + (enc.is_utf8 ? 'Yes' : 'No') + '</span></div>';
                 if (enc.recommendation) {
                     detailsHTML += '<div class="issue-item issue-warning" style="margin-top: 12px;"><span class="issue-line">Tip</span><span class="issue-message">' + enc.recommendation + '</span></div>';
                 }
@@ -2165,7 +2189,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             if (data.structure.has_optional_section) {
                 structureHTML += `<div class="structure-item">
                     <span class="structure-label">Optional Section</span>
-                    <span class="structure-value" style="color: #fbbf24;">Present</span>
+                    <span class="structure-value" style="color: #FBD779;">Present</span>
                 </div>`;
             }
 
@@ -2271,23 +2295,40 @@ SITEMAP_HTML = f"""<!DOCTYPE html>
     <meta name="description" content="Site map for LLMs.txt Validator — all pages, sections, and resources.">
     <link rel="canonical" href="{SITE_URL}/sitemap">
     <meta name="robots" content="index, follow">
-    <meta name="theme-color" content="#10b981">
+    <meta name="theme-color" content="#2C3B4C">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%2310b981'/%3E%3Cpath d='M28 52 L44 68 L74 34' stroke='white' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
     <style>
+        @font-face {{
+            font-family: 'NHaasGroteskTXPro';
+            src: url('/static/Fonts/NHaasGroteskTXPro-65Md.ttf') format('truetype');
+            font-weight: 500;
+            font-style: normal;
+            font-display: swap;
+        }}
+        @font-face {{
+            font-family: 'NeuzeitGro';
+            src: url('/static/Fonts/NeuzeitGro-Reg.ttf') format('truetype');
+            font-weight: 400;
+            font-style: normal;
+            font-display: swap;
+        }}
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 100%);
+            font-family: 'NeuzeitGro', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a2330 0%, #2C3B4C 100%);
             background-attachment: fixed;
             min-height: 100vh;
             color: #e2e8f0;
             padding: 60px 20px;
         }}
+        h1, h2, h3, h4, h5, h6 {{
+            font-family: 'NHaasGroteskTXPro', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }}
         .wrap {{ max-width: 860px; margin: 0 auto; }}
-        a.back {{ color: #10b981; text-decoration: none; font-size: 0.9rem; }}
+        a.back {{ color: #7FBBE6; text-decoration: none; font-size: 0.9rem; }}
         a.back:hover {{ text-decoration: underline; }}
         h1 {{ font-size: 2.5rem; margin: 20px 0 8px; }}
-        h1 span {{ color: #10b981; }}
+        h1 span {{ color: #7FBBE6; }}
         p.lede {{ color: #94a3b8; margin-bottom: 40px; }}
         h2 {{
             font-size: 1.25rem; color: #fff;
@@ -2297,7 +2338,7 @@ SITEMAP_HTML = f"""<!DOCTYPE html>
         ul {{ list-style: none; padding: 0; }}
         li {{ padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }}
         li:last-child {{ border-bottom: none; }}
-        a {{ color: #10b981; text-decoration: none; font-weight: 500; }}
+        a {{ color: #7FBBE6; text-decoration: none; font-weight: 500; }}
         a:hover {{ text-decoration: underline; }}
         .desc {{ color: #64748b; font-size: 0.9rem; margin-left: 8px; }}
         footer {{ margin-top: 60px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.08); color: #64748b; font-size: 0.85rem; text-align: center; }}
