@@ -1,4 +1,5 @@
 import re
+import asyncio
 import base64
 import subprocess
 import httpx
@@ -28,6 +29,13 @@ class ValidateRequest(BaseModel):
     url: Optional[str] = None
     file_base64: Optional[str] = None
     file_type: str = "llms.txt"  # llms.txt, llms-ctx.txt, llms-full.txt
+
+
+class DetectRequest(BaseModel):
+    url: str
+
+
+LLMS_FILES = ["llms.txt", "llms-ctx.txt", "llms-full.txt"]
 
 
 @dataclass
@@ -719,6 +727,84 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
         .loading { display: none; text-align: center; padding: 40px; }
         .loading.show { display: block; }
+
+        .detector-sub {
+            color: #94a3b8;
+            max-width: 720px;
+            margin: 0 auto 28px;
+            text-align: center;
+            line-height: 1.6;
+        }
+        .detector-sub code {
+            background: rgba(255,255,255,0.06);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: #e2e8f0;
+        }
+        .detector-summary {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 1.05rem;
+            color: #e2e8f0;
+        }
+        .detector-summary code {
+            background: rgba(255,255,255,0.06);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .detector-summary .summary-count { color: #10b981; font-weight: 700; }
+        .detector-summary .summary-count.none { color: #f87171; }
+        .detector-summary .summary-note {
+            margin-top: 8px;
+            color: #94a3b8;
+            font-size: 0.95rem;
+        }
+        .detector-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .detector-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .detector-card.found { border-color: rgba(16,185,129,0.4); }
+        .detector-card.missing { border-color: rgba(239,68,68,0.25); }
+        .detector-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            gap: 12px;
+        }
+        .detector-card-name {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            font-weight: 600;
+            color: #e2e8f0;
+            font-size: 1rem;
+        }
+        .detector-card-meta {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+        .detector-card-meta .meta-row { color: #64748b; }
+        .detector-card-meta a {
+            color: #38bdf8;
+            text-decoration: none;
+            word-break: break-all;
+        }
+        .detector-card-meta a:hover { text-decoration: underline; }
+        .detector-card-actions { margin-top: 14px; }
         .spinner {
             width: 40px;
             height: 40px;
@@ -1248,11 +1334,12 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <nav class="navbar" id="navbar">
         <a href="#" class="nav-logo">LLMs<span>.txt</span> Validator</a>
         <div class="nav-links">
+            <a href="#detector" class="nav-link-text">Detector</a>
             <a href="#validator" class="nav-link-text">Validator</a>
             <a href="#about" class="nav-link-text">About</a>
             <a href="#features" class="nav-link-text">Features</a>
             <a href="#faq" class="nav-link-text">FAQ</a>
-            <a href="#validator" class="nav-cta">Validate Now</a>
+            <a href="#detector" class="nav-cta">Detect Now</a>
         </div>
     </nav>
 
@@ -1261,7 +1348,39 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <div class="hero-badge">Open Standard &middot; Free Tool</div>
         <h1>Validate Your <span>LLMs.txt</span> Files Instantly</h1>
         <p class="hero-sub">Check compliance with the llms.txt specification. Catch errors, verify structure, and ensure your site is ready for AI agents and language models.</p>
-        <a href="#validator" class="hero-cta">Start Validating &#8595;</a>
+        <a href="#detector" class="hero-cta">Detect llms.txt &#8595;</a>
+    </section>
+
+    <div class="section-divider"></div>
+
+    <!-- Detector Tool -->
+    <section id="detector">
+    <div class="container">
+        <div class="tool-label"><span>Free Detector</span></div>
+        <div class="section-heading">Does this site have llms.txt?</div>
+        <p class="detector-sub">Enter a URL and we'll check the root for <code>llms.txt</code>, <code>llms-ctx.txt</code>, and <code>llms-full.txt</code>.</p>
+
+        <div class="input-section">
+            <div class="input-group">
+                <label>Website URL</label>
+                <div class="url-input-wrapper">
+                    <input type="text" class="url-input" id="detectUrlField" placeholder="https://example.com">
+                    <button class="btn" id="detectBtn">Detect</button>
+                </div>
+                <p style="margin-top: 8px;"><span class="example-link" onclick="document.getElementById('detectUrlField').value='https://anthropic.com'">Try: anthropic.com</span></p>
+            </div>
+        </div>
+
+        <div class="loading" id="detectLoading">
+            <div class="spinner"></div>
+            <p>Checking the site...</p>
+        </div>
+
+        <div class="detector-results" id="detectorResults" style="display:none;">
+            <div class="detector-summary" id="detectorSummary"></div>
+            <div class="detector-grid" id="detectorGrid"></div>
+        </div>
+    </div>
     </section>
 
     <div class="section-divider"></div>
@@ -1625,6 +1744,112 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
             await validate({ url, file_type: currentFileType });
         });
+
+        // Detector
+        const detectBtn = document.getElementById('detectBtn');
+        const detectUrlField = document.getElementById('detectUrlField');
+        detectBtn.addEventListener('click', () => runDetect());
+        detectUrlField.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') runDetect();
+        });
+
+        async function runDetect() {
+            const url = detectUrlField.value.trim();
+            if (!url) return alert('Please enter a URL');
+
+            const loading = document.getElementById('detectLoading');
+            const resultsEl = document.getElementById('detectorResults');
+            loading.classList.add('show');
+            resultsEl.style.display = 'none';
+
+            try {
+                const response = await fetch('/detect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url }),
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || 'Detection failed');
+                renderDetection(data);
+            } catch (err) {
+                alert('Detection error: ' + err.message);
+            } finally {
+                loading.classList.remove('show');
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes == null) return '—';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function renderDetection(data) {
+            const { url, results, summary } = data;
+            const summaryEl = document.getElementById('detectorSummary');
+            const gridEl = document.getElementById('detectorGrid');
+
+            const countCls = summary.found_count === 0 ? 'summary-count none' : 'summary-count';
+            let note = '';
+            if (summary.found_count === 0) {
+                note = '<div class="summary-note">No llms.txt files found at this site &mdash; it is not yet AI-ready.</div>';
+            } else if (summary.found_count < summary.total) {
+                note = '<div class="summary-note">Some files are missing. Validate what you have and consider adding the rest.</div>';
+            } else {
+                note = '<div class="summary-note">Fully configured. Validate each file to confirm it follows the spec.</div>';
+            }
+
+            summaryEl.innerHTML = `
+                <div><span class="${countCls}">${summary.found_count} / ${summary.total}</span> LLM files detected at <code>${escapeHtml(url)}</code></div>
+                ${note}
+            `;
+
+            gridEl.innerHTML = results.map(r => {
+                const cls = r.found ? 'found' : 'missing';
+                const badgeCls = r.found ? 'status-valid' : 'status-invalid';
+                const badgeText = r.found ? 'Found' : 'Missing';
+                const fileUrl = escapeHtml(r.url);
+                const meta = r.found
+                    ? `<div>HTTP ${r.status} &middot; ${formatBytes(r.size)}${r.content_type ? ' &middot; ' + escapeHtml(r.content_type) : ''}</div>
+                       <div style="margin-top:4px;"><a href="${fileUrl}" target="_blank" rel="noopener">${fileUrl}</a></div>`
+                    : `<div>${r.status ? 'HTTP ' + r.status : 'Not reachable'}</div>
+                       <div class="meta-row" style="margin-top:4px;">${fileUrl}</div>`;
+                const actions = r.found
+                    ? `<div class="detector-card-actions"><button class="btn btn-secondary" data-validate="${escapeHtml(r.file)}" data-site="${escapeHtml(url)}">Validate this file</button></div>`
+                    : '';
+                return `
+                    <div class="detector-card ${cls}">
+                        <div class="detector-card-header">
+                            <span class="detector-card-name">${escapeHtml(r.file)}</span>
+                            <span class="status-badge ${badgeCls}">${badgeText}</span>
+                        </div>
+                        <div class="detector-card-meta">${meta}</div>
+                        ${actions}
+                    </div>
+                `;
+            }).join('');
+
+            gridEl.querySelectorAll('button[data-validate]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const fileType = btn.dataset.validate;
+                    const siteUrl = btn.dataset.site;
+                    document.querySelector('.tab[data-tab="url"]').click();
+                    setFileType(fileType);
+                    document.getElementById('urlField').value = siteUrl;
+                    document.getElementById('validator').scrollIntoView({ behavior: 'smooth' });
+                    setTimeout(() => document.getElementById('fetchBtn').click(), 450);
+                });
+            });
+
+            document.getElementById('detectorResults').style.display = 'block';
+        }
 
         // Validate button (paste)
         document.getElementById('validateBtn').addEventListener('click', async () => {
@@ -2122,6 +2347,96 @@ SITEMAP_HTML = f"""<!DOCTYPE html>
 @app.get("/sitemap", response_class=HTMLResponse)
 async def sitemap_html():
     return SITEMAP_HTML
+
+
+async def check_file_exists(client: httpx.AsyncClient, base_url: str, filename: str) -> dict:
+    """Check whether a single llms.txt-family file exists at base_url/filename."""
+    full_url = f"{base_url}/{filename}"
+
+    def _from_curl():
+        raw, ct = _fetch_with_curl(full_url)
+        if raw:
+            return {
+                "file": filename, "url": full_url, "found": True,
+                "status": 200, "size": len(raw),
+                "content_type": (ct.split(";")[0].strip() if ct else None),
+            }
+        return None
+
+    try:
+        response = await client.head(full_url)
+        if response.status_code in (403, 405, 501):
+            response = await client.get(full_url)
+
+        status = response.status_code
+        found = 200 <= status < 300
+
+        if not found and status == 403:
+            curl_result = _from_curl()
+            if curl_result:
+                return curl_result
+
+        size = None
+        content_type = None
+        ct_header = response.headers.get("content-type", "")
+        if ct_header:
+            content_type = ct_header.split(";")[0].strip() or None
+
+        if found:
+            cl = response.headers.get("content-length")
+            if cl and cl.isdigit():
+                size = int(cl)
+            elif response.request.method == "HEAD":
+                # HEAD didn't give us size — do a GET to measure
+                get_resp = await client.get(full_url)
+                size = len(get_resp.content)
+                if not content_type:
+                    ct_header = get_resp.headers.get("content-type", "")
+                    if ct_header:
+                        content_type = ct_header.split(";")[0].strip() or None
+            else:
+                size = len(response.content)
+
+        return {
+            "file": filename, "url": full_url, "found": found,
+            "status": status, "size": size, "content_type": content_type,
+        }
+    except (httpx.RequestError, httpx.HTTPError):
+        curl_result = _from_curl()
+        if curl_result:
+            return curl_result
+        return {
+            "file": filename, "url": full_url, "found": False,
+            "status": 0, "size": None, "content_type": None,
+        }
+
+
+@app.post("/detect")
+async def detect(request: DetectRequest):
+    """Detect presence of llms.txt, llms-ctx.txt, and llms-full.txt at a URL."""
+    raw_url = (request.url or "").strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="URL is required")
+    if not raw_url.startswith(("http://", "https://")):
+        raw_url = "https://" + raw_url
+
+    parsed = urlparse(raw_url)
+    if not parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
+        results = await asyncio.gather(
+            *[check_file_exists(client, base_url, f) for f in LLMS_FILES]
+        )
+
+    found_count = sum(1 for r in results if r["found"])
+    return {
+        "url": base_url,
+        "results": list(results),
+        "summary": {"found_count": found_count, "total": len(LLMS_FILES)},
+    }
 
 
 @app.post("/validate")
