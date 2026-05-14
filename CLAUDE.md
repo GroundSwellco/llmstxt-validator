@@ -86,7 +86,32 @@ uvicorn api.index:app --reload
 ### Deploy to Vercel
 1. Push to GitHub
 2. Import to Vercel
-3. No environment variables needed
+3. Configure environment variables (see below)
+
+## Environment Variables
+Set in Vercel project settings (or `.env.local` for local dev):
+
+| Variable | Required for | Notes |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `/generate` | Claude Haiku for llms.txt authoring |
+| `STRIPE_SECRET_KEY` | `/checkout`, `/generate-paid` | Server-side Stripe key (`sk_live_...` / `sk_test_...`) |
+| `SUPABASE_URL` | Auth | Public project URL, e.g. `https://xxx.supabase.co` |
+| `SUPABASE_ANON_KEY` | Auth | Public anon key — safe to expose to the browser |
+| `SUPABASE_JWT_SECRET` | Server-side auth | HS256 secret from Supabase → Project Settings → API → JWT Settings. Used by the FastAPI backend to verify access tokens. **Server-only — never exposed to the browser.** |
+
+When `SUPABASE_URL` / `SUPABASE_ANON_KEY` are missing, the page still renders but the auth modal shows a configuration notice and submission is disabled. When `SUPABASE_JWT_SECRET` is missing, `/api/me` and any future protected endpoints will return 401.
+
+## Auth Architecture
+- **Client:** `@supabase/supabase-js` (UMD bundle from jsDelivr) handles signup/login/session persistence via `localStorage`.
+- **Server:** No Supabase SDK on Python side — just PyJWT verifying HS256 tokens. `get_current_user(request)` extracts the bearer token and returns `{id, email, role}` or `None`. `require_user(request)` raises 401.
+- **Auth flow:** email + password only at launch. Magic links / OAuth deferred. Email confirmation behavior follows the Supabase project setting; if confirmation is required, signup shows a "check your email" message instead of immediately signing the user in.
+- **Calling protected endpoints from JS:** `await window.authHeaders()` returns `{ Authorization: 'Bearer ...' }` (or `{}` if logged out).
+
+## Pricing Tiers (concept — not yet billed)
+- **Free:** Validator + Detector + account.
+- **Business:** Editing, saved configs, ongoing reviews (TBD).
+- **Agency:** Bulk reports for client audits (TBD).
+Subscription billing layers on top of the existing one-time `/checkout` flow (kept for now).
 
 ## Reference
 - llms.txt specification: https://llmstxt.org/
