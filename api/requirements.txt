@@ -4,3 +4,4 @@ pydantic
 charset-normalizer
 anthropic
 stripe
+pyjwt

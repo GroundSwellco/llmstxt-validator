@@ -31,6 +31,13 @@ try:
 except ImportError:
     _STRIPE_AVAILABLE = False
 
+try:
+    import jwt as _pyjwt
+    _PYJWT_AVAILABLE = True
+except BaseException:
+    _pyjwt = None
+    _PYJWT_AVAILABLE = False
+
 
 def _ensure_stripe():
     if not _STRIPE_AVAILABLE:
@@ -39,6 +46,54 @@ def _ensure_stripe():
     if not key:
         raise HTTPException(status_code=503, detail="STRIPE_SECRET_KEY is not configured on the server.")
     stripe.api_key = key
+
+
+def _supabase_public_config() -> dict:
+    return {
+        "url": os.environ.get("SUPABASE_URL", ""),
+        "anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+    }
+
+
+def _verify_supabase_token(token: str) -> Optional[dict]:
+    """Decode and verify a Supabase access token (HS256). Returns claims or None."""
+    if not _PYJWT_AVAILABLE:
+        return None
+    secret = os.environ.get("SUPABASE_JWT_SECRET")
+    if not secret or not token:
+        return None
+    try:
+        return _pyjwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+            options={"require": ["exp", "sub"]},
+        )
+    except Exception:
+        return None
+
+
+def get_current_user(request: Request) -> Optional[dict]:
+    """Best-effort user extraction. Returns None for anonymous requests."""
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    claims = _verify_supabase_token(auth.split(" ", 1)[1].strip())
+    if not claims:
+        return None
+    return {
+        "id": claims.get("sub"),
+        "email": claims.get("email"),
+        "role": claims.get("role", "authenticated"),
+    }
+
+
+def require_user(request: Request) -> dict:
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+    return user
 
 
 GENERATION_PRICES = {
@@ -1636,6 +1691,168 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             .step-connector { transform: rotate(90deg); padding-top: 0; }
             .section-heading { font-size: 1.7rem; }
         }
+
+        /* ===== AUTH ===== */
+        .nav-account { display: flex; align-items: center; gap: 16px; }
+        .nav-signin {
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 0.9rem;
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 0;
+            font-family: inherit;
+        }
+        .nav-signin:hover { color: #e2e8f0; }
+        .nav-user-email {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        @media (max-width: 720px) {
+            .nav-user-email { display: none; }
+        }
+        .auth-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(8, 10, 18, 0.78);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+        .auth-overlay.show { display: flex; }
+        .auth-card {
+            width: 100%;
+            max-width: 420px;
+            background: #14161f;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 32px;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .auth-close {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 1.4rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 4px 8px;
+        }
+        .auth-close:hover { color: #e2e8f0; }
+        .auth-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            margin: 0 0 6px;
+        }
+        .auth-sub {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            margin: 0 0 22px;
+        }
+        .auth-tabs {
+            display: flex;
+            gap: 4px;
+            background: rgba(255,255,255,0.04);
+            padding: 4px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        .auth-tab {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 0.9rem;
+            cursor: pointer;
+            font-family: inherit;
+            transition: background 0.15s, color 0.15s;
+        }
+        .auth-tab.active {
+            background: rgba(127,187,230,0.16);
+            color: #e2e8f0;
+        }
+        .auth-field { margin-bottom: 14px; }
+        .auth-field label {
+            display: block;
+            color: #94a3b8;
+            font-size: 0.8rem;
+            margin-bottom: 6px;
+        }
+        .auth-field input {
+            width: 100%;
+            padding: 11px 14px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 0.95rem;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .auth-field input:focus {
+            outline: none;
+            border-color: rgba(127,187,230,0.45);
+            background: rgba(255,255,255,0.06);
+        }
+        .auth-submit {
+            width: 100%;
+            padding: 12px 16px;
+            background: #F16365;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 6px;
+            font-family: inherit;
+            transition: background 0.15s;
+        }
+        .auth-submit:hover:not(:disabled) { background: #D94E50; }
+        .auth-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+        .auth-message {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            display: none;
+        }
+        .auth-message.show { display: block; }
+        .auth-message.error {
+            background: rgba(241,99,101,0.12);
+            border: 1px solid rgba(241,99,101,0.3);
+            color: #FDB4B5;
+        }
+        .auth-message.success {
+            background: rgba(127,187,230,0.12);
+            border: 1px solid rgba(127,187,230,0.3);
+            color: #BFE0F5;
+        }
+        .auth-disabled-note {
+            margin-top: 14px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            background: rgba(251,215,121,0.08);
+            border: 1px solid rgba(251,215,121,0.25);
+            color: #FBD779;
+            font-size: 0.82rem;
+        }
     </style>
 </head>
 <body>
@@ -1648,9 +1865,42 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <a href="#about" class="nav-link-text">About</a>
             <a href="#features" class="nav-link-text">Features</a>
             <a href="#faq" class="nav-link-text">FAQ</a>
-            <a href="#detector" class="nav-cta">Detect Now</a>
+            <div class="nav-account" id="navAccount">
+                <button type="button" class="nav-signin" id="navSigninBtn" style="display:none">Sign in</button>
+                <a href="#" class="nav-cta" id="navSignupBtn" style="display:none">Sign up</a>
+                <span class="nav-user-email" id="navUserEmail" style="display:none"></span>
+                <button type="button" class="nav-signin" id="navSignoutBtn" style="display:none">Sign out</button>
+            </div>
         </div>
     </nav>
+
+    <!-- Auth Modal -->
+    <div class="auth-overlay" id="authOverlay" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+        <div class="auth-card">
+            <button type="button" class="auth-close" id="authClose" aria-label="Close">&times;</button>
+            <h2 class="auth-title" id="authTitle">Welcome back</h2>
+            <p class="auth-sub" id="authSub">Sign in to manage your llms.txt files.</p>
+            <div class="auth-tabs" role="tablist">
+                <button type="button" class="auth-tab active" data-auth-tab="signin" role="tab">Sign in</button>
+                <button type="button" class="auth-tab" data-auth-tab="signup" role="tab">Sign up</button>
+            </div>
+            <form id="authForm" autocomplete="on">
+                <div class="auth-field">
+                    <label for="authEmail">Email</label>
+                    <input type="email" id="authEmail" name="email" required autocomplete="email" />
+                </div>
+                <div class="auth-field">
+                    <label for="authPassword">Password</label>
+                    <input type="password" id="authPassword" name="password" required minlength="6" autocomplete="current-password" />
+                </div>
+                <button type="submit" class="auth-submit" id="authSubmit">Sign in</button>
+                <div class="auth-message" id="authMessage"></div>
+                <div class="auth-disabled-note" id="authDisabledNote" style="display:none">
+                    Accounts aren't configured on this deployment yet. Set <code>SUPABASE_URL</code> and <code>SUPABASE_ANON_KEY</code> to enable sign-in.
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Hero -->
     <section class="hero">
@@ -2033,7 +2283,169 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         <p>A free tool for the llms.txt ecosystem. Built for the AI-ready web.</p>
     </footer>
 
+    <script>window.__APP_CONFIG = __SUPABASE_CONFIG__;</script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js" defer></script>
+
     <script>
+        // ===== Auth (Supabase) =====
+        const _authCfg = (window.__APP_CONFIG || {});
+        const _authEnabled = !!(_authCfg.url && _authCfg.anon_key);
+        let _sb = null;
+        let _currentSession = null;
+
+        const navSigninBtn = document.getElementById('navSigninBtn');
+        const navSignupBtn = document.getElementById('navSignupBtn');
+        const navSignoutBtn = document.getElementById('navSignoutBtn');
+        const navUserEmail = document.getElementById('navUserEmail');
+        const authOverlay = document.getElementById('authOverlay');
+        const authClose = document.getElementById('authClose');
+        const authForm = document.getElementById('authForm');
+        const authSubmit = document.getElementById('authSubmit');
+        const authMessage = document.getElementById('authMessage');
+        const authDisabledNote = document.getElementById('authDisabledNote');
+        const authTitle = document.getElementById('authTitle');
+        const authSub = document.getElementById('authSub');
+        const authEmail = document.getElementById('authEmail');
+        const authPassword = document.getElementById('authPassword');
+
+        let _authMode = 'signin';
+
+        function setAuthMessage(text, kind) {
+            if (!text) {
+                authMessage.className = 'auth-message';
+                authMessage.textContent = '';
+                return;
+            }
+            authMessage.className = 'auth-message show ' + (kind || 'error');
+            authMessage.textContent = text;
+        }
+
+        function setAuthMode(mode) {
+            _authMode = mode;
+            document.querySelectorAll('.auth-tab').forEach(t => {
+                t.classList.toggle('active', t.dataset.authTab === mode);
+            });
+            if (mode === 'signup') {
+                authTitle.textContent = 'Create your account';
+                authSub.textContent = 'Free to start. Validate and detect llms.txt files.';
+                authSubmit.textContent = 'Sign up';
+                authPassword.setAttribute('autocomplete', 'new-password');
+            } else {
+                authTitle.textContent = 'Welcome back';
+                authSub.textContent = 'Sign in to manage your llms.txt files.';
+                authSubmit.textContent = 'Sign in';
+                authPassword.setAttribute('autocomplete', 'current-password');
+            }
+            setAuthMessage('');
+        }
+
+        function openAuth(mode) {
+            setAuthMode(mode || 'signin');
+            authDisabledNote.style.display = _authEnabled ? 'none' : 'block';
+            authSubmit.disabled = !_authEnabled;
+            authOverlay.classList.add('show');
+            setTimeout(() => authEmail.focus(), 50);
+        }
+
+        function closeAuth() {
+            authOverlay.classList.remove('show');
+            setAuthMessage('');
+            authForm.reset();
+        }
+
+        function renderAuthState(session) {
+            _currentSession = session || null;
+            const loggedIn = !!session;
+            navSigninBtn.style.display = loggedIn ? 'none' : '';
+            navSignupBtn.style.display = loggedIn ? 'none' : '';
+            navUserEmail.style.display = loggedIn ? '' : 'none';
+            navSignoutBtn.style.display = loggedIn ? '' : 'none';
+            if (loggedIn) {
+                navUserEmail.textContent = session.user?.email || 'Signed in';
+            }
+        }
+
+        navSigninBtn.addEventListener('click', () => openAuth('signin'));
+        navSignupBtn.addEventListener('click', (e) => { e.preventDefault(); openAuth('signup'); });
+        authClose.addEventListener('click', closeAuth);
+        authOverlay.addEventListener('click', (e) => {
+            if (e.target === authOverlay) closeAuth();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && authOverlay.classList.contains('show')) closeAuth();
+        });
+        document.querySelectorAll('.auth-tab').forEach(t => {
+            t.addEventListener('click', () => setAuthMode(t.dataset.authTab));
+        });
+
+        navSignoutBtn.addEventListener('click', async () => {
+            if (!_sb) return;
+            try {
+                await _sb.auth.signOut();
+            } catch (err) {
+                console.warn('Sign-out error', err);
+            }
+        });
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!_sb) return;
+            const email = authEmail.value.trim();
+            const password = authPassword.value;
+            if (!email || !password) return;
+            authSubmit.disabled = true;
+            setAuthMessage('');
+            try {
+                if (_authMode === 'signup') {
+                    const { data, error } = await _sb.auth.signUp({ email, password });
+                    if (error) throw error;
+                    if (data.session) {
+                        setAuthMessage('Account created. Welcome!', 'success');
+                        setTimeout(closeAuth, 700);
+                    } else {
+                        setAuthMessage('Check your email to confirm your account before signing in.', 'success');
+                    }
+                } else {
+                    const { error } = await _sb.auth.signInWithPassword({ email, password });
+                    if (error) throw error;
+                    setAuthMessage('Signed in.', 'success');
+                    setTimeout(closeAuth, 400);
+                }
+            } catch (err) {
+                setAuthMessage(err?.message || 'Authentication failed.', 'error');
+            } finally {
+                authSubmit.disabled = !_authEnabled;
+            }
+        });
+
+        function initAuth() {
+            if (!_authEnabled || !window.supabase || !window.supabase.createClient) {
+                renderAuthState(null);
+                return;
+            }
+            _sb = window.supabase.createClient(_authCfg.url, _authCfg.anon_key, {
+                auth: { persistSession: true, autoRefreshToken: true },
+            });
+            _sb.auth.getSession().then(({ data }) => renderAuthState(data.session));
+            _sb.auth.onAuthStateChange((_event, session) => renderAuthState(session));
+        }
+
+        async function authHeaders() {
+            if (!_sb) return {};
+            const { data } = await _sb.auth.getSession();
+            const token = data?.session?.access_token;
+            return token ? { Authorization: 'Bearer ' + token } : {};
+        }
+        window.authHeaders = authHeaders;
+
+        if (document.readyState === 'loading') {
+            window.addEventListener('DOMContentLoaded', () => setTimeout(initAuth, 0));
+        } else {
+            setTimeout(initAuth, 0);
+        }
+        renderAuthState(null);
+
+        // ===== App =====
         let currentTab = 'url';
         let currentFileType = 'llms.txt';
         let currentContent = '';
@@ -2665,7 +3077,22 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    return HTML_TEMPLATE
+    import json as _json
+    cfg = _supabase_public_config()
+    return HTML_TEMPLATE.replace("__SUPABASE_CONFIG__", _json.dumps(cfg))
+
+
+@app.get("/api/config")
+async def api_config():
+    return _supabase_public_config()
+
+
+@app.get("/api/me")
+async def api_me(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    return user
 
 
 SITE_URL = "https://llmvalidator.io"
