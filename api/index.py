@@ -50,8 +50,8 @@ def _ensure_stripe():
 
 def _supabase_public_config() -> dict:
     return {
-        "url": os.environ.get("SUPABASE_URL", ""),
-        "anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+        "url": (os.environ.get("SUPABASE_URL") or "").strip(),
+        "anon_key": (os.environ.get("SUPABASE_ANON_KEY") or "").strip(),
     }
 
 
@@ -59,7 +59,7 @@ def _verify_supabase_token(token: str) -> Optional[dict]:
     """Decode and verify a Supabase access token (HS256). Returns claims or None."""
     if not _PYJWT_AVAILABLE:
         return None
-    secret = os.environ.get("SUPABASE_JWT_SECRET")
+    secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
     if not secret or not token:
         return None
     try:
