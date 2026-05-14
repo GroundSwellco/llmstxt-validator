@@ -55,23 +55,76 @@ def _supabase_public_config() -> dict:
     }
 
 
-def _verify_supabase_token(token: str) -> Optional[dict]:
-    """Decode and verify a Supabase access token (HS256). Returns claims or None."""
+_JWKS_CLIENT_CACHE: dict = {}
+
+
+def _get_jwks_client():
+    """Return a cached PyJWKClient for the configured Supabase project."""
     if not _PYJWT_AVAILABLE:
         return None
-    secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
-    if not secret or not token:
+    supabase_url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+    if not supabase_url:
+        return None
+    cached = _JWKS_CLIENT_CACHE.get(supabase_url)
+    if cached is not None:
+        return cached
+    try:
+        client = _pyjwt.PyJWKClient(
+            supabase_url + "/auth/v1/.well-known/jwks.json",
+            cache_keys=True,
+            lifespan=300,
+        )
+    except BaseException:
+        return None
+    _JWKS_CLIENT_CACHE[supabase_url] = client
+    return client
+
+
+_ASYMMETRIC_ALGS = ("ES256", "ES384", "ES512", "RS256", "RS384", "RS512", "EdDSA")
+
+
+def _verify_supabase_token(token: str) -> Optional[dict]:
+    """Decode and verify a Supabase access token.
+
+    Supports the new asymmetric JWT signing keys (ES256/RS256/EdDSA via JWKS)
+    and the legacy HS256 shared-secret flow. Returns claims or None.
+    """
+    if not _PYJWT_AVAILABLE or not token:
         return None
     try:
-        return _pyjwt.decode(
-            token,
-            secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-            options={"require": ["exp", "sub"]},
-        )
+        alg = _pyjwt.get_unverified_header(token).get("alg", "")
     except Exception:
         return None
+    if alg in _ASYMMETRIC_ALGS:
+        client = _get_jwks_client()
+        if client is None:
+            return None
+        try:
+            signing_key = client.get_signing_key_from_jwt(token)
+            return _pyjwt.decode(
+                token,
+                signing_key.key,
+                algorithms=[alg],
+                audience="authenticated",
+                options={"require": ["exp", "sub"]},
+            )
+        except Exception:
+            return None
+    if alg == "HS256":
+        secret = (os.environ.get("SUPABASE_JWT_SECRET") or "").strip()
+        if not secret:
+            return None
+        try:
+            return _pyjwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                audience="authenticated",
+                options={"require": ["exp", "sub"]},
+            )
+        except Exception:
+            return None
+    return None
 
 
 def get_current_user(request: Request) -> Optional[dict]:
