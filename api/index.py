@@ -154,6 +154,174 @@ GENERATION_PRICES = {
     "llms-full.txt": {"label": "llms-full.txt generation", "amount_cents": 499},
 }
 
+SUBSCRIPTION_TIERS = {
+    "business": {
+        "label": "Business",
+        "price_cents": 1900,
+        "currency": "usd",
+        "interval": "month",
+        "lookup_key": "business_monthly",
+        "product_name": "LLMs.txt Validator — Business",
+        "description": "Save runs, in-app editing, ongoing reviews.",
+    },
+    "agency": {
+        "label": "Agency",
+        "price_cents": 4900,
+        "currency": "usd",
+        "interval": "month",
+        "lookup_key": "agency_monthly",
+        "product_name": "LLMs.txt Validator — Agency",
+        "description": "Bulk reports for client audits.",
+    },
+}
+
+_subscription_price_cache: dict = {}
+
+
+def _supabase_admin_creds():
+    url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+    key = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or "").strip()
+    return url, key
+
+
+async def _supabase_admin_request(method: str, path: str, **kwargs) -> Optional[httpx.Response]:
+    url_base, key = _supabase_admin_creds()
+    if not url_base or not key:
+        return None
+    headers = kwargs.pop("headers", None) or {}
+    headers.setdefault("apikey", key)
+    headers.setdefault("Authorization", f"Bearer {key}")
+    headers.setdefault("Content-Type", "application/json")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        return await client.request(method, f"{url_base}{path}", headers=headers, **kwargs)
+
+
+async def _get_profile(user_id: str) -> Optional[dict]:
+    resp = await _supabase_admin_request(
+        "GET",
+        f"/rest/v1/profiles?id=eq.{user_id}&select=*",
+    )
+    if not resp or resp.status_code != 200:
+        return None
+    rows = resp.json() if resp.content else []
+    return rows[0] if rows else None
+
+
+async def _update_profile(user_id: str, fields: dict) -> Optional[dict]:
+    resp = await _supabase_admin_request(
+        "PATCH",
+        f"/rest/v1/profiles?id=eq.{user_id}",
+        json=fields,
+        headers={"Prefer": "return=representation"},
+    )
+    if not resp or resp.status_code not in (200, 204):
+        return None
+    try:
+        rows = resp.json() if resp.content else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+async def _update_profile_by_customer(customer_id: str, fields: dict) -> Optional[dict]:
+    resp = await _supabase_admin_request(
+        "PATCH",
+        f"/rest/v1/profiles?stripe_customer_id=eq.{customer_id}",
+        json=fields,
+        headers={"Prefer": "return=representation"},
+    )
+    if not resp or resp.status_code not in (200, 204):
+        return None
+    try:
+        rows = resp.json() if resp.content else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _ts_to_iso(ts) -> Optional[str]:
+    if not ts:
+        return None
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _tier_from_subscription(sub) -> Optional[str]:
+    """Extract our tier key from a Stripe Subscription object."""
+    try:
+        items = sub.get("items") if isinstance(sub, dict) else getattr(sub, "items", None)
+        data = items.get("data") if isinstance(items, dict) else (items.data if items else None)
+        if not data:
+            return None
+        first = data[0]
+        price = first.get("price") if isinstance(first, dict) else first.price
+        if not price:
+            return None
+        metadata = price.get("metadata") if isinstance(price, dict) else getattr(price, "metadata", None)
+        if metadata and (metadata.get("tier_key") if isinstance(metadata, dict) else metadata.get("tier_key", None)):
+            tk = metadata.get("tier_key") if isinstance(metadata, dict) else metadata["tier_key"]
+            if tk in SUBSCRIPTION_TIERS:
+                return tk
+        lookup = price.get("lookup_key") if isinstance(price, dict) else getattr(price, "lookup_key", None)
+        if lookup:
+            for key, cfg in SUBSCRIPTION_TIERS.items():
+                if cfg["lookup_key"] == lookup:
+                    return key
+    except Exception:
+        pass
+    return None
+
+
+async def _ensure_subscription_price(tier_key: str) -> str:
+    """Return the Stripe Price ID for a tier, creating product+price if needed."""
+    _ensure_stripe()
+    if tier_key not in SUBSCRIPTION_TIERS:
+        raise HTTPException(400, f"Unknown tier: {tier_key}")
+    if tier_key in _subscription_price_cache:
+        return _subscription_price_cache[tier_key]
+
+    cfg = SUBSCRIPTION_TIERS[tier_key]
+    lookup_key = cfg["lookup_key"]
+
+    existing = await asyncio.to_thread(
+        stripe.Price.list, lookup_keys=[lookup_key], active=True, limit=1, expand=["data.product"]
+    )
+    if existing.data:
+        price_id = existing.data[0].id
+        _subscription_price_cache[tier_key] = price_id
+        return price_id
+
+    products = await asyncio.to_thread(stripe.Product.list, active=True, limit=100)
+    product = None
+    for p in products.data:
+        meta = getattr(p, "metadata", None) or {}
+        if meta.get("tier_key") == tier_key:
+            product = p
+            break
+    if product is None:
+        product = await asyncio.to_thread(
+            stripe.Product.create,
+            name=cfg["product_name"],
+            description=cfg["description"],
+            metadata={"tier_key": tier_key},
+        )
+
+    price = await asyncio.to_thread(
+        stripe.Price.create,
+        product=product.id,
+        unit_amount=cfg["price_cents"],
+        currency=cfg["currency"],
+        recurring={"interval": cfg["interval"]},
+        lookup_key=lookup_key,
+        metadata={"tier_key": tier_key},
+    )
+    _subscription_price_cache[tier_key] = price.id
+    return price.id
+
+
 app = FastAPI(title="LLMs.txt Validator")
 
 app.add_middleware(
@@ -1906,6 +2074,152 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             color: #FBD779;
             font-size: 0.82rem;
         }
+
+        /* ===== PRICING ===== */
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 22px;
+            max-width: 1100px;
+            margin: 40px auto 0;
+        }
+        @media (max-width: 900px) {
+            .pricing-grid { grid-template-columns: 1fr; }
+        }
+        .pricing-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 28px;
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .pricing-card.featured {
+            border-color: rgba(241,99,101,0.5);
+            background: linear-gradient(160deg, rgba(241,99,101,0.08), rgba(127,187,230,0.04));
+        }
+        .pricing-card:hover { transform: translateY(-2px); }
+        .pricing-name {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #94a3b8;
+            margin-bottom: 8px;
+        }
+        .pricing-card.featured .pricing-name { color: #F16365; }
+        .pricing-price {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+        .pricing-price .pricing-period {
+            font-size: 0.9rem;
+            font-weight: 400;
+            color: #94a3b8;
+            margin-left: 4px;
+        }
+        .pricing-tagline {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            margin-bottom: 22px;
+        }
+        .pricing-features {
+            list-style: none;
+            padding: 0;
+            margin: 0 0 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .pricing-features li {
+            color: #cbd5e1;
+            font-size: 0.92rem;
+            padding-left: 22px;
+            position: relative;
+        }
+        .pricing-features li::before {
+            content: '\2713';
+            position: absolute;
+            left: 0;
+            color: #7FBBE6;
+            font-weight: 700;
+        }
+        .pricing-cta {
+            margin-top: auto;
+            display: inline-block;
+            text-align: center;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            background: rgba(255,255,255,0.06);
+            color: #e2e8f0;
+            border: 1px solid rgba(255,255,255,0.12);
+            transition: background 0.15s, border-color 0.15s;
+            font-family: inherit;
+        }
+        .pricing-cta:hover:not(:disabled) { background: rgba(255,255,255,0.1); }
+        .pricing-cta.primary {
+            background: #F16365;
+            border-color: #F16365;
+            color: #fff;
+        }
+        .pricing-cta.primary:hover:not(:disabled) { background: #D94E50; }
+        .pricing-cta:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .billing-banner {
+            max-width: 1100px;
+            margin: 20px auto 0;
+            padding: 14px 18px;
+            border-radius: 12px;
+            font-size: 0.92rem;
+            display: none;
+        }
+        .billing-banner.show { display: block; }
+        .billing-banner.success {
+            background: rgba(127,187,230,0.1);
+            border: 1px solid rgba(127,187,230,0.3);
+            color: #BFE0F5;
+        }
+        .billing-banner.canceled {
+            background: rgba(251,215,121,0.08);
+            border: 1px solid rgba(251,215,121,0.25);
+            color: #FBD779;
+        }
+        .nav-tier-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background: rgba(127,187,230,0.18);
+            color: #BFE0F5;
+            margin-left: 6px;
+        }
+        .nav-tier-badge.free {
+            background: rgba(255,255,255,0.06);
+            color: #94a3b8;
+        }
+        .nav-manage {
+            color: #7FBBE6;
+            text-decoration: none;
+            font-size: 0.85rem;
+            cursor: pointer;
+            background: none;
+            border: none;
+            padding: 0;
+            font-family: inherit;
+        }
+        .nav-manage:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -1917,11 +2231,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <a href="#validator" class="nav-link-text">Validator</a>
             <a href="#about" class="nav-link-text">About</a>
             <a href="#features" class="nav-link-text">Features</a>
+            <a href="#pricing" class="nav-link-text">Pricing</a>
             <a href="#faq" class="nav-link-text">FAQ</a>
             <div class="nav-account" id="navAccount">
                 <button type="button" class="nav-signin" id="navSigninBtn" style="display:none">Sign in</button>
                 <a href="#" class="nav-cta" id="navSignupBtn" style="display:none">Sign up</a>
-                <span class="nav-user-email" id="navUserEmail" style="display:none"></span>
+                <button type="button" class="nav-manage" id="navManageBtn" style="display:none">Manage billing</button>
+                <span class="nav-user-email" id="navUserEmail" style="display:none">
+                    <span id="navUserEmailText"></span>
+                    <span class="nav-tier-badge free" id="navTierBadge"></span>
+                </span>
                 <button type="button" class="nav-signin" id="navSignoutBtn" style="display:none">Sign out</button>
             </div>
         </div>
@@ -2281,6 +2600,54 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 
     <div class="section-divider"></div>
 
+    <!-- Pricing -->
+    <section id="pricing" class="section section-center reveal">
+        <div class="section-label">Plans</div>
+        <div class="section-heading">Simple, predictable pricing</div>
+        <div class="section-desc">Start free. Upgrade when you need to save and manage your llms.txt across sites.</div>
+        <div class="billing-banner" id="billingBanner"></div>
+        <div class="pricing-grid">
+            <div class="pricing-card" data-tier="free">
+                <div class="pricing-name">Free</div>
+                <div class="pricing-price">$0<span class="pricing-period">/forever</span></div>
+                <div class="pricing-tagline">Everything you need to validate and detect llms.txt files.</div>
+                <ul class="pricing-features">
+                    <li>Unlimited validations</li>
+                    <li>Detector for llms.txt, llms-ctx.txt, llms-full.txt</li>
+                    <li>Inline editing &amp; download</li>
+                    <li>Account &amp; sign-in</li>
+                </ul>
+                <button type="button" class="pricing-cta" data-action="free">Get started</button>
+            </div>
+            <div class="pricing-card featured" data-tier="business">
+                <div class="pricing-name">Business</div>
+                <div class="pricing-price">$19<span class="pricing-period">/month</span></div>
+                <div class="pricing-tagline">For site owners managing their own llms.txt files.</div>
+                <ul class="pricing-features">
+                    <li>Everything in Free</li>
+                    <li>Save validator &amp; detector runs</li>
+                    <li>In-app editing with autosave (coming soon)</li>
+                    <li>Ongoing review reminders (coming soon)</li>
+                </ul>
+                <button type="button" class="pricing-cta primary" data-action="subscribe" data-tier="business">Subscribe</button>
+            </div>
+            <div class="pricing-card" data-tier="agency">
+                <div class="pricing-name">Agency</div>
+                <div class="pricing-price">$49<span class="pricing-period">/month</span></div>
+                <div class="pricing-tagline">For agencies auditing llms.txt across client portfolios.</div>
+                <ul class="pricing-features">
+                    <li>Everything in Business</li>
+                    <li>Bulk detection across URL lists (coming soon)</li>
+                    <li>Client-facing audit reports (coming soon)</li>
+                    <li>Priority support</li>
+                </ul>
+                <button type="button" class="pricing-cta" data-action="subscribe" data-tier="agency">Subscribe</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="section-divider"></div>
+
     <!-- FAQ -->
     <section id="faq" class="section section-center reveal">
         <div class="section-label">Common Questions</div>
@@ -2329,6 +2696,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             <a href="https://llmstxt.org/" target="_blank">llms.txt Specification</a>
             <a href="#validator">Validator</a>
             <a href="#about">About</a>
+            <a href="#pricing">Pricing</a>
             <a href="#faq">FAQ</a>
             <a href="/sitemap">Sitemap</a>
             <a href="/llms.txt">llms.txt</a>
@@ -2406,6 +2774,66 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             authForm.reset();
         }
 
+        const navUserEmailText = document.getElementById('navUserEmailText');
+        const navTierBadge = document.getElementById('navTierBadge');
+        const navManageBtn = document.getElementById('navManageBtn');
+        const billingBanner = document.getElementById('billingBanner');
+
+        let _currentMe = null;
+
+        const TIER_RANK = { free: 0, business: 1, agency: 2 };
+
+        function renderTierBadge(tier) {
+            const t = tier || 'free';
+            navTierBadge.textContent = t;
+            navTierBadge.className = 'nav-tier-badge' + (t === 'free' ? ' free' : '');
+        }
+
+        async function fetchMe() {
+            if (!_sb) { _currentMe = null; renderPricingCtas(); return; }
+            try {
+                const headers = await authHeaders();
+                if (!headers.Authorization) { _currentMe = null; renderPricingCtas(); return; }
+                const r = await fetch('/api/me', { headers });
+                if (!r.ok) { _currentMe = null; renderPricingCtas(); return; }
+                _currentMe = await r.json();
+                renderTierBadge(_currentMe.tier);
+                navManageBtn.style.display = _currentMe.has_subscription ? '' : 'none';
+            } catch {
+                _currentMe = null;
+            }
+            renderPricingCtas();
+        }
+
+        function renderPricingCtas() {
+            document.querySelectorAll('.pricing-card').forEach(card => {
+                const tier = card.dataset.tier;
+                const btn = card.querySelector('.pricing-cta');
+                if (!btn) return;
+                btn.disabled = false;
+                btn.dataset.action = tier === 'free' ? 'free' : 'subscribe';
+                btn.dataset.tier = tier;
+
+                if (!_currentSession) {
+                    btn.textContent = tier === 'free' ? 'Get started' : 'Sign up to subscribe';
+                    return;
+                }
+                const currentTier = (_currentMe && _currentMe.tier) || 'free';
+                if (tier === currentTier) {
+                    btn.textContent = tier === 'free' ? 'Your plan' : 'Current plan';
+                    btn.disabled = true;
+                    return;
+                }
+                if (tier === 'free') {
+                    btn.textContent = 'Manage billing';
+                    btn.dataset.action = 'portal';
+                    return;
+                }
+                const cmp = TIER_RANK[tier] - TIER_RANK[currentTier];
+                btn.textContent = cmp > 0 ? 'Upgrade' : 'Switch plan';
+            });
+        }
+
         function renderAuthState(session) {
             _currentSession = session || null;
             const loggedIn = !!session;
@@ -2414,9 +2842,80 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             navUserEmail.style.display = loggedIn ? '' : 'none';
             navSignoutBtn.style.display = loggedIn ? '' : 'none';
             if (loggedIn) {
-                navUserEmail.textContent = session.user?.email || 'Signed in';
+                navUserEmailText.textContent = session.user?.email || 'Signed in';
+                renderTierBadge('free');
+                fetchMe();
+            } else {
+                _currentMe = null;
+                navManageBtn.style.display = 'none';
+                renderPricingCtas();
             }
         }
+
+        async function startCheckout(tier) {
+            if (!_sb) return;
+            const headers = await authHeaders();
+            if (!headers.Authorization) { openAuth('signup'); return; }
+            try {
+                const r = await fetch('/api/subscribe', {
+                    method: 'POST',
+                    headers: { ...headers, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tier }),
+                });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.detail || 'Subscription failed');
+                if (data.checkout_url) window.location.href = data.checkout_url;
+            } catch (err) {
+                alert('Could not start checkout: ' + err.message);
+            }
+        }
+
+        async function openBillingPortal() {
+            if (!_sb) return;
+            const headers = await authHeaders();
+            if (!headers.Authorization) return;
+            try {
+                const r = await fetch('/api/billing/portal', { method: 'POST', headers });
+                const data = await r.json();
+                if (!r.ok) throw new Error(data.detail || 'Could not open billing portal');
+                if (data.portal_url) window.location.href = data.portal_url;
+            } catch (err) {
+                alert('Could not open billing portal: ' + err.message);
+            }
+        }
+
+        document.querySelectorAll('.pricing-cta').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const action = btn.dataset.action;
+                const tier = btn.dataset.tier;
+                if (action === 'subscribe') {
+                    if (!_currentSession) { openAuth('signup'); return; }
+                    startCheckout(tier);
+                } else if (action === 'portal') {
+                    openBillingPortal();
+                } else if (action === 'free') {
+                    if (!_currentSession) { openAuth('signup'); return; }
+                    document.getElementById('validator')?.scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
+
+        navManageBtn.addEventListener('click', openBillingPortal);
+
+        (function showBillingBanner() {
+            const params = new URLSearchParams(window.location.search);
+            const status = params.get('subscription');
+            if (!status) return;
+            if (status === 'success') {
+                billingBanner.textContent = 'Subscription started. Welcome aboard!';
+                billingBanner.className = 'billing-banner show success';
+            } else if (status === 'canceled') {
+                billingBanner.textContent = 'Checkout canceled. You have not been charged.';
+                billingBanner.className = 'billing-banner show canceled';
+            }
+            // Clean the query param so banner doesn't reappear on refresh.
+            history.replaceState({}, '', window.location.pathname + window.location.hash);
+        })();
 
         navSigninBtn.addEventListener('click', () => openAuth('signin'));
         navSignupBtn.addEventListener('click', (e) => { e.preventDefault(); openAuth('signup'); });
@@ -3145,7 +3644,151 @@ async def api_me(request: Request):
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated.")
-    return user
+    profile = await _get_profile(user["id"]) or {}
+    return {
+        **user,
+        "tier": profile.get("tier", "free"),
+        "subscription_status": profile.get("subscription_status"),
+        "current_period_end": profile.get("current_period_end"),
+        "has_subscription": bool(profile.get("stripe_subscription_id")),
+    }
+
+
+class SubscribeRequest(BaseModel):
+    tier: str
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(request: SubscribeRequest, http_request: Request):
+    user = require_user(http_request)
+    if request.tier not in SUBSCRIPTION_TIERS:
+        raise HTTPException(400, "Unknown tier.")
+    _ensure_stripe()
+
+    price_id = await _ensure_subscription_price(request.tier)
+    profile = await _get_profile(user["id"]) or {}
+
+    customer_id = profile.get("stripe_customer_id")
+    if not customer_id:
+        customer = await asyncio.to_thread(
+            stripe.Customer.create,
+            email=user.get("email"),
+            metadata={"supabase_user_id": user["id"]},
+        )
+        customer_id = customer.id
+        await _update_profile(user["id"], {"stripe_customer_id": customer_id})
+
+    return_base = str(http_request.base_url).rstrip("/")
+    try:
+        session = await asyncio.to_thread(
+            stripe.checkout.Session.create,
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=f"{return_base}/?subscription=success",
+            cancel_url=f"{return_base}/?subscription=canceled",
+            client_reference_id=user["id"],
+            metadata={"supabase_user_id": user["id"], "tier_key": request.tier},
+            subscription_data={"metadata": {"supabase_user_id": user["id"], "tier_key": request.tier}},
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Stripe error: {str(e)[:300]}")
+    return {"checkout_url": session.url}
+
+
+@app.post("/api/billing/portal")
+async def api_billing_portal(http_request: Request):
+    user = require_user(http_request)
+    _ensure_stripe()
+    profile = await _get_profile(user["id"]) or {}
+    customer_id = profile.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(400, "No billing customer on file.")
+    return_base = str(http_request.base_url).rstrip("/")
+    try:
+        session = await asyncio.to_thread(
+            stripe.billing_portal.Session.create,
+            customer=customer_id,
+            return_url=return_base + "/",
+        )
+    except Exception as e:
+        raise HTTPException(502, f"Stripe error: {str(e)[:300]}")
+    return {"portal_url": session.url}
+
+
+@app.post("/api/billing/webhook")
+async def api_billing_webhook(http_request: Request):
+    _ensure_stripe()
+    secret = (os.environ.get("STRIPE_WEBHOOK_SECRET") or "").strip()
+    if not secret:
+        raise HTTPException(503, "Webhook secret not configured.")
+    payload = await http_request.body()
+    sig = http_request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, secret)
+    except Exception as e:
+        raise HTTPException(400, f"Invalid signature: {str(e)[:200]}")
+
+    etype = event["type"]
+    obj = event["data"]["object"]
+
+    if etype == "checkout.session.completed":
+        user_id = obj.get("client_reference_id") or (obj.get("metadata") or {}).get("supabase_user_id")
+        customer_id = obj.get("customer")
+        subscription_id = obj.get("subscription")
+        if user_id and subscription_id:
+            try:
+                sub = await asyncio.to_thread(stripe.Subscription.retrieve, subscription_id)
+            except Exception:
+                sub = None
+            tier_key = _tier_from_subscription(sub) if sub else None
+            price_id = None
+            status = None
+            period_end = None
+            if sub is not None:
+                try:
+                    price_id = sub["items"]["data"][0]["price"]["id"]
+                except Exception:
+                    price_id = None
+                status = sub.get("status")
+                period_end = _ts_to_iso(sub.get("current_period_end"))
+            await _update_profile(user_id, {
+                "stripe_customer_id": customer_id,
+                "stripe_subscription_id": subscription_id,
+                "stripe_price_id": price_id,
+                "subscription_status": status,
+                "current_period_end": period_end,
+                "tier": tier_key if tier_key and status in ("active", "trialing") else "free",
+            })
+
+    elif etype in ("customer.subscription.created", "customer.subscription.updated"):
+        customer_id = obj.get("customer")
+        tier_key = _tier_from_subscription(obj)
+        status = obj.get("status")
+        price_id = None
+        try:
+            price_id = obj["items"]["data"][0]["price"]["id"]
+        except Exception:
+            price_id = None
+        await _update_profile_by_customer(customer_id, {
+            "stripe_subscription_id": obj.get("id"),
+            "stripe_price_id": price_id,
+            "subscription_status": status,
+            "current_period_end": _ts_to_iso(obj.get("current_period_end")),
+            "tier": tier_key if tier_key and status in ("active", "trialing") else "free",
+        })
+
+    elif etype == "customer.subscription.deleted":
+        customer_id = obj.get("customer")
+        await _update_profile_by_customer(customer_id, {
+            "stripe_subscription_id": None,
+            "stripe_price_id": None,
+            "subscription_status": "canceled",
+            "current_period_end": _ts_to_iso(obj.get("current_period_end")),
+            "tier": "free",
+        })
+
+    return {"received": True}
 
 
 SITE_URL = "https://llmvalidator.io"
@@ -3199,6 +3842,7 @@ async def llms_txt():
 
 - [What is llms.txt]({SITE_URL}/#about): Overview of the specification
 - [Features]({SITE_URL}/#features): Validator capabilities
+- [Pricing]({SITE_URL}/#pricing): Plans and subscription tiers
 - [FAQ]({SITE_URL}/#faq): Common questions about the validator and spec
 
 ## Reference
