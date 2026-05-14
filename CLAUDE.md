@@ -94,12 +94,21 @@ Set in Vercel project settings (or `.env.local` for local dev):
 | Variable | Required for | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `/generate` | Claude Haiku for llms.txt authoring |
-| `STRIPE_SECRET_KEY` | `/checkout`, `/generate-paid` | Server-side Stripe key (`sk_live_...` / `sk_test_...`) |
-| `SUPABASE_URL` | Auth | Public project URL, e.g. `https://xxx.supabase.co` |
+| `STRIPE_SECRET_KEY` | `/checkout`, `/generate-paid`, `/api/subscribe` | Server-side Stripe key (`sk_live_...` / `sk_test_...`) |
+| `STRIPE_WEBHOOK_SECRET` | `/api/billing/webhook` | Signing secret for the Stripe webhook endpoint (`whsec_...`). Created when you add the webhook in Stripe → Developers → Webhooks. |
+| `SUPABASE_URL` | Auth, billing | Public project URL, e.g. `https://xxx.supabase.co` |
 | `SUPABASE_ANON_KEY` | Auth | Public anon key — safe to expose to the browser |
-| `SUPABASE_JWT_SECRET` | Server-side auth | HS256 secret from Supabase → Project Settings → API → JWT Settings. Used by the FastAPI backend to verify access tokens. **Server-only — never exposed to the browser.** |
+| `SUPABASE_JWT_SECRET` | Server-side auth (HS256 projects only) | HS256 secret from Supabase → Project Settings → API → JWT Settings. **Server-only.** Newer Supabase projects use asymmetric ES256 keys and don't need this — the backend auto-detects and verifies via the project's JWKS endpoint. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Billing webhook + tier reads | Server-only key from Supabase → Project Settings → API. Bypasses RLS so the backend can update `profiles` from the Stripe webhook (where there is no user session). **Never expose to the browser.** |
 
-When `SUPABASE_URL` / `SUPABASE_ANON_KEY` are missing, the page still renders but the auth modal shows a configuration notice and submission is disabled. When `SUPABASE_JWT_SECRET` is missing, `/api/me` and any future protected endpoints will return 401.
+When `SUPABASE_URL` / `SUPABASE_ANON_KEY` are missing, the page still renders but the auth modal shows a configuration notice and submission is disabled. When `SUPABASE_SERVICE_ROLE_KEY` is missing, `/api/me` falls back to free-tier reporting and the webhook can't persist subscription state.
+
+## Database Migrations
+SQL migrations live in `supabase/migrations/`. Run them in order via the Supabase SQL Editor:
+
+| File | Adds |
+|---|---|
+| `0001_billing.sql` | `profiles` table (tier, stripe IDs, subscription status), auto-create profile trigger on user signup, RLS so users read only their own row. |
 
 ## Auth Architecture
 - **Client:** `@supabase/supabase-js` (UMD bundle from jsDelivr) handles signup/login/session persistence via `localStorage`.
@@ -107,11 +116,23 @@ When `SUPABASE_URL` / `SUPABASE_ANON_KEY` are missing, the page still renders bu
 - **Auth flow:** email + password only at launch. Magic links / OAuth deferred. Email confirmation behavior follows the Supabase project setting; if confirmation is required, signup shows a "check your email" message instead of immediately signing the user in.
 - **Calling protected endpoints from JS:** `await window.authHeaders()` returns `{ Authorization: 'Bearer ...' }` (or `{}` if logged out).
 
-## Pricing Tiers (concept — not yet billed)
-- **Free:** Validator + Detector + account.
-- **Business:** Editing, saved configs, ongoing reviews (TBD).
-- **Agency:** Bulk reports for client audits (TBD).
-Subscription billing layers on top of the existing one-time `/checkout` flow (kept for now).
+## Pricing Tiers
+| Tier | Price | What's included | Stripe `lookup_key` |
+|---|---|---|---|
+| Free | $0 | Validator + Detector + account | — |
+| Business | $19/mo | Save runs (next PR), in-app editing (TBD), ongoing reviews (TBD) | `business_monthly` |
+| Agency | $49/mo | Bulk reports + audit deliverables (TBD) | `agency_monthly` |
+
+Subscription billing layers on top of the existing one-time `/checkout` flow (kept for now — Stripe Products are auto-created on first `/api/subscribe` call via `lookup_key`, so no manual Stripe Dashboard setup is required for prices).
+
+### Stripe Webhook
+Add a webhook endpoint in Stripe → Developers → Webhooks pointing at `https://<your-host>/api/billing/webhook`. Listen to at least:
+- `checkout.session.completed`
+- `customer.subscription.created`
+- `customer.subscription.updated`
+- `customer.subscription.deleted`
+
+Copy the signing secret (`whsec_...`) into `STRIPE_WEBHOOK_SECRET` in Vercel.
 
 ## Reference
 - llms.txt specification: https://llmstxt.org/
